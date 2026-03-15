@@ -1,0 +1,85 @@
+{
+  "name": "ghostfrog",
+  "version": "1.0.0",
+  "description": "AI-native local SEO spider — free Screaming Frog alternative",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev:renderer": "vite",
+    "dev:main": "tsc -p tsconfig.main.json --watch",
+    "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\" \"electronmon .\"",
+    "build:renderer": "vite build",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build": "npm run build:renderer && npm run build:main",
+    "dist": "npm run build && electron-builder",
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "electron-rebuild": "electron-rebuild"
+  },
+  "keywords": ["seo", "crawler", "spider", "electron", "screaming-frog-alternative"],
+  "author": "Daniel Shashko <daniel@organikpi.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/danishashko/ghostfrog",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danishashko/ghostfrog.git"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.9",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^4.0.18",
+    "concurrently": "^9.1.2",
+    "electron": "^35.1.5",
+    "electron-builder": "^25.1.8",
+    "electronmon": "^2.0.3",
+    "jimp": "^1.6.0",
+    "png-to-ico": "^3.0.1",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.1",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "axios": "^1.8.3",
+    "better-sqlite3": "^11.8.1",
+    "cheerio": "^1.0.0",
+    "electron-updater": "^6.8.3",
+    "keytar": "^7.9.0",
+    "p-queue": "^7.4.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "uuid": "^11.1.0"
+  },
+  "build": {
+    "appId": "com.organikpi.ghostfrog",
+    "productName": "GhostFrog",
+    "copyright": "Copyright © 2026 Daniel Shashko",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "resources/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "resources/icon.ico",
+      "publisherName": "Daniel Shashko"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "resources/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "danishashko",
+      "repo": "ghostfrog"
+    }
+  }
+}

@@ -1,0 +1,345 @@
+import PQueue from 'p-queue';
+import { URL } from 'url';
+import { v4 as uuidv4 } from 'uuid';
+import { EventEmitter } from 'events';
+import {
+  CrawlConfig,
+  CrawlProgress,
+  CrawlStatus,
+  CrawlRecord,
+} from '../types/index';
+import { crawlPageLocal } from './crawler-local';
+import { crawlPageBrightData } from './crawler-brightdata';
+import { CostTracker } from './cost-tracker';
+import {
+  insertCrawl,
+  insertPage,
+  insertLinks,
+  insertImages,
+  updateCrawlStatus,
+  pageExists,
+  getCrawledUrls,
+  getLatestIncompleteCrawl,
+} from './database';
+
+export class CrawlOrchestrator extends EventEmitter {
+  private queue: PQueue | null = null;
+  private crawlId: string = '';
+  private visited = new Set<string>();
+  private pending = new Set<string>();
+  private status: CrawlStatus = 'idle';
+  private config: CrawlConfig | null = null;
+  private baseOrigin: string = '';
+  private completedCount = 0;
+  private totalQueued = 0;
+  private totalSpend = 0;
+  private responseTimes: number[] = [];
+  private startTime = 0;
+  private apiKey: string | null = null;
+  private bdZone: string = 'web_unlocker1';
+
+  async startCrawl(config: CrawlConfig, apiKey?: string, bdZone?: string): Promise<string> {
+    this.crawlId = uuidv4();
+    this.config = config;
+    this.visited.clear();
+    this.pending.clear();
+    this.status = 'running';
+    this.completedCount = 0;
+    this.totalQueued = 0;
+    this.totalSpend = 0;
+    this.responseTimes = [];
+    this.startTime = Date.now();
+    this.apiKey = apiKey || null;
+    this.bdZone = bdZone || 'web_unlocker1';
+
+    const baseUrl = new URL(config.startUrl);
+    this.baseOrigin = baseUrl.origin;
+
+    const crawlRecord: CrawlRecord = {
+      id: this.crawlId,
+      mode: config.engine,
+      startUrl: config.startUrl,
+      startTime: new Date().toISOString(),
+      endTime: null,
+      status: 'running',
+      configJson: JSON.stringify(config),
+      totalUrls: 0,
+      completedUrls: 0,
+      totalSpendUsd: 0,
+    };
+
+    insertCrawl(crawlRecord);
+
+    const concurrency = config.engine === 'local' ? (config.concurrency || 5) : 20;
+    this.queue = new PQueue({ concurrency, autoStart: true });
+
+    if (config.mode === 'spider') {
+      this.enqueueUrl(config.startUrl, 0);
+    } else {
+      // List mode: startUrl contains newline-separated URLs
+      const urls = config.startUrl
+        .split('\n')
+        .map(u => u.trim())
+        .filter(u => u.length > 0);
+      for (const u of urls) {
+        this.enqueueUrl(u, 0);
+      }
+    }
+
+    this.queue.on('idle', () => {
+      if (this.status === 'running') {
+        this.status = 'completed';
+        updateCrawlStatus(
+          this.crawlId,
+          'completed',
+          this.totalQueued,
+          this.completedCount,
+          this.totalSpend,
+          new Date().toISOString()
+        );
+        this.emitProgress();
+        this.emit('complete', this.crawlId);
+      }
+    });
+
+    return this.crawlId;
+  }
+
+  pause(): void {
+    if (this.queue && this.status === 'running') {
+      this.queue.pause();
+      this.status = 'paused';
+      updateCrawlStatus(this.crawlId, 'paused', this.totalQueued, this.completedCount, this.totalSpend);
+      this.emitProgress();
+    }
+  }
+
+  resume(): void {
+    if (this.queue && this.status === 'paused') {
+      this.status = 'running';
+      this.queue.start();
+      updateCrawlStatus(this.crawlId, 'running', this.totalQueued, this.completedCount, this.totalSpend);
+      this.emitProgress();
+    }
+  }
+
+  stop(): void {
+    if (this.queue) {
+      this.queue.clear();
+      this.queue.pause();
+    }
+    this.status = 'completed';
+    updateCrawlStatus(
+      this.crawlId,
+      'completed',
+      this.totalQueued,
+      this.completedCount,
+      this.totalSpend,
+      new Date().toISOString()
+    );
+    this.emitProgress();
+    this.emit('complete', this.crawlId);
+  }
+
+  getStatus(): CrawlStatus {
+    return this.status;
+  }
+
+  getCrawlId(): string {
+    return this.crawlId;
+  }
+
+  /** Check if there's an incomplete crawl that can be resumed */
+  getIncompleteCrawl(): CrawlRecord | undefined {
+    return getLatestIncompleteCrawl();
+  }
+
+  /** Resume an incomplete crawl from where it left off */
+  async resumeIncompleteCrawl(apiKey?: string, bdZone?: string): Promise<string | null> {
+    const incomplete = getLatestIncompleteCrawl();
+    if (!incomplete) return null;
+
+    const config: CrawlConfig = JSON.parse(incomplete.configJson);
+    this.crawlId = incomplete.id;
+    this.config = config;
+    this.status = 'running';
+    this.completedCount = incomplete.completedUrls;
+    this.totalQueued = incomplete.completedUrls;
+    this.totalSpend = incomplete.totalSpendUsd;
+    this.responseTimes = [];
+    this.startTime = Date.now();
+    this.apiKey = apiKey || null;
+    this.bdZone = bdZone || 'web_unlocker1';
+
+    const baseUrl = new URL(config.startUrl);
+    this.baseOrigin = baseUrl.origin;
+
+    // Rebuild visited set from already-crawled URLs
+    const crawledUrls = getCrawledUrls(this.crawlId);
+    this.visited.clear();
+    this.pending.clear();
+    for (const url of crawledUrls) {
+      this.visited.add(url);
+    }
+
+    updateCrawlStatus(this.crawlId, 'running', this.totalQueued, this.completedCount, this.totalSpend);
+
+    const concurrency = config.engine === 'local' ? (config.concurrency || 5) : 20;
+    this.queue = new PQueue({ concurrency, autoStart: true });
+
+    // Re-enqueue the start URL — enqueueUrl will skip already-visited
+    if (config.mode === 'spider') {
+      this.enqueueUrl(config.startUrl, 0);
+    } else {
+      const urls = config.startUrl.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+      for (const u of urls) {
+        this.enqueueUrl(u, 0);
+      }
+    }
+
+    this.queue.on('idle', () => {
+      if (this.status === 'running') {
+        this.status = 'completed';
+        updateCrawlStatus(
+          this.crawlId,
+          'completed',
+          this.totalQueued,
+          this.completedCount,
+          this.totalSpend,
+          new Date().toISOString()
+        );
+        this.emitProgress();
+        this.emit('complete', this.crawlId);
+      }
+    });
+
+    this.emitProgress();
+    return this.crawlId;
+  }
+
+  private enqueueUrl(url: string, depth: number): void {
+    if (!this.config) return;
+    if (this.visited.has(url) || this.pending.has(url)) return;
+    if (this.config.maxUrls > 0 && this.totalQueued >= this.config.maxUrls) return;
+    if (this.config.maxDepth > 0 && depth > this.config.maxDepth) return;
+
+    // Scope check
+    try {
+      const parsed = new URL(url);
+      if (parsed.origin !== this.baseOrigin) return;
+    } catch {
+      return;
+    }
+
+    this.pending.add(url);
+    this.totalQueued++;
+    this.queue!.add(() => this.processUrl(url, depth));
+  }
+
+  private async processUrl(url: string, depth: number): Promise<void> {
+    if (!this.config) return;
+    if (this.status === 'paused') return;
+
+    // Check cost limit before fetching (BD mode)
+    if (this.config.engine === 'brightdata' && this.config.maxCostUsd > 0) {
+      const estimatedCost = CostTracker.costPerRequest();
+      if (this.totalSpend + estimatedCost > this.config.maxCostUsd * 0.95) {
+        this.queue?.pause();
+        this.status = 'paused';
+        this.emit('cost-limit-warning', {
+          currentSpend: this.totalSpend,
+          limit: this.config.maxCostUsd,
+        });
+        return;
+      }
+    }
+
+    this.pending.delete(url);
+    this.visited.add(url);
+
+    // Skip if already in DB (resume support)
+    if (pageExists(this.crawlId, url)) {
+      this.completedCount++;
+      this.emitProgress();
+      return;
+    }
+
+    this.emit('url-start', url);
+
+    try {
+      let result: Awaited<ReturnType<typeof crawlPageLocal>>;
+
+      if (this.config.engine === 'local') {
+        result = await crawlPageLocal(url, this.crawlId, depth, this.config, this.baseOrigin);
+      } else {
+        if (!this.apiKey) {
+          this.emit('error', new Error('Bright Data API key not configured'));
+          return;
+        }
+        const bdResult = await crawlPageBrightData(
+          url,
+          this.crawlId,
+          depth,
+          this.config,
+          this.baseOrigin,
+          this.apiKey,
+          this.bdZone
+        );
+        this.totalSpend += bdResult.page.costUsd;
+        result = bdResult;
+      }
+
+      // Store to DB
+      insertPage(result.page);
+      if (result.links.length > 0) insertLinks(result.links);
+      if (result.images.length > 0) insertImages(result.images);
+
+      this.completedCount++;
+      if (result.page.responseTimeMs) {
+        this.responseTimes.push(result.page.responseTimeMs);
+        if (this.responseTimes.length > 100) this.responseTimes.shift();
+      }
+
+      // Spider mode: enqueue discovered URLs
+      if (this.config.mode === 'spider') {
+        for (const discoveredUrl of result.discoveredUrls) {
+          this.enqueueUrl(discoveredUrl, depth + 1);
+        }
+      }
+
+      // Save progress every 10 pages
+      if (this.completedCount % 10 === 0) {
+        updateCrawlStatus(this.crawlId, 'running', this.totalQueued, this.completedCount, this.totalSpend);
+      }
+
+      this.emitProgress(url);
+    } catch (err) {
+      this.emit('url-error', { url, error: err });
+      this.completedCount++;
+      this.emitProgress(url);
+    }
+  }
+
+  private emitProgress(currentUrl?: string): void {
+    const avgResponseMs = this.responseTimes.length > 0
+      ? Math.round(this.responseTimes.reduce((a, b) => a + b, 0) / this.responseTimes.length)
+      : 0;
+
+    const elapsed = (Date.now() - this.startTime) / 1000 || 1;
+    const pagesPerSecond = Math.round((this.completedCount / elapsed) * 10) / 10;
+
+    const progress: CrawlProgress = {
+      crawlId: this.crawlId,
+      status: this.status,
+      completed: this.completedCount,
+      total: this.totalQueued,
+      currentUrl: currentUrl || '',
+      avgResponseMs,
+      totalSpendUsd: this.totalSpend,
+      costLimitUsd: this.config?.maxCostUsd ?? 0,
+      pagesPerSecond,
+    };
+
+    this.emit('progress', progress);
+  }
+}
