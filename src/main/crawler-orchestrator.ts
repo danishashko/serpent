@@ -2,11 +2,15 @@ import PQueue from 'p-queue';
 import { URL } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { EventEmitter } from 'events';
+import axios from 'axios';
 import {
   CrawlConfig,
   CrawlProgress,
   CrawlStatus,
   CrawlRecord,
+  RedirectData,
+  HreflangData,
+  CustomExtractionResult,
 } from '../types/index';
 import { crawlPageLocal } from './crawler-local';
 import { crawlPageBrightData } from './crawler-brightdata';
@@ -16,11 +20,83 @@ import {
   insertPage,
   insertLinks,
   insertImages,
+  insertRedirects,
+  insertHreflang,
+  insertCustomExtractions,
   updateCrawlStatus,
   pageExists,
   getCrawledUrls,
   getLatestIncompleteCrawl,
 } from './database';
+
+// ─── Simple robots.txt parser ──────────────────────────────────────────────────
+
+interface RobotsTxtRules {
+  disallowed: string[];
+  allowed: string[];
+}
+
+function parseRobotsTxt(body: string, userAgent: string = '*'): RobotsTxtRules {
+  const lines = body.split('\n').map(l => l.trim());
+  const rules: RobotsTxtRules = { disallowed: [], allowed: [] };
+  let currentAgentMatches = false;
+  let foundSpecificAgent = false;
+
+  for (const line of lines) {
+    if (line.startsWith('#') || line === '') {
+      // Blank line resets current agent block
+      if (line === '') currentAgentMatches = false;
+      continue;
+    }
+
+    const lower = line.toLowerCase();
+    if (lower.startsWith('user-agent:')) {
+      const agent = line.slice('user-agent:'.length).trim().toLowerCase();
+      if (agent === userAgent.toLowerCase() || agent === '*') {
+        currentAgentMatches = true;
+        if (agent !== '*') foundSpecificAgent = true;
+      } else {
+        currentAgentMatches = false;
+      }
+    } else if (currentAgentMatches && lower.startsWith('disallow:')) {
+      const path = line.slice('disallow:'.length).trim();
+      if (path) rules.disallowed.push(path);
+    } else if (currentAgentMatches && lower.startsWith('allow:')) {
+      const path = line.slice('allow:'.length).trim();
+      if (path) rules.allowed.push(path);
+    }
+  }
+
+  // If we found specific agent rules, only use those (re-parse)
+  if (foundSpecificAgent && userAgent !== '*') {
+    return parseRobotsTxt(body, userAgent);
+  }
+
+  return rules;
+}
+
+function isUrlAllowedByRobots(urlPath: string, rules: RobotsTxtRules): boolean {
+  // Check allowed first (more specific takes precedence by length)
+  let longestAllow = -1;
+  let longestDisallow = -1;
+
+  for (const pattern of rules.allowed) {
+    if (urlPath.startsWith(pattern)) {
+      longestAllow = Math.max(longestAllow, pattern.length);
+    }
+  }
+
+  for (const pattern of rules.disallowed) {
+    if (urlPath.startsWith(pattern)) {
+      longestDisallow = Math.max(longestDisallow, pattern.length);
+    }
+  }
+
+  // If both match, longer pattern wins. If equal length, allow wins.
+  if (longestDisallow < 0) return true; // Nothing disallowed
+  if (longestAllow >= longestDisallow) return true; // Allow is more specific
+  return false;
+}
 
 export class CrawlOrchestrator extends EventEmitter {
   private queue: PQueue | null = null;
@@ -37,6 +113,23 @@ export class CrawlOrchestrator extends EventEmitter {
   private startTime = 0;
   private apiKey: string | null = null;
   private bdZone: string = 'web_unlocker1';
+  private robotsRules: RobotsTxtRules | null = null;
+
+  private async fetchRobotsTxt(origin: string): Promise<void> {
+    try {
+      const response = await axios.get(`${origin}/robots.txt`, {
+        timeout: 10000,
+        validateStatus: (s) => s < 500,
+      });
+      if (response.status === 200 && typeof response.data === 'string') {
+        this.robotsRules = parseRobotsTxt(response.data, 'GhostFrog');
+      } else {
+        this.robotsRules = { disallowed: [], allowed: [] }; // No robots.txt = all allowed
+      }
+    } catch {
+      this.robotsRules = { disallowed: [], allowed: [] }; // Fetch failed = all allowed
+    }
+  }
 
   async startCrawl(config: CrawlConfig, apiKey?: string, bdZone?: string): Promise<string> {
     this.crawlId = uuidv4();
@@ -54,6 +147,11 @@ export class CrawlOrchestrator extends EventEmitter {
 
     const baseUrl = new URL(config.startUrl);
     this.baseOrigin = baseUrl.origin;
+    this.robotsRules = null;
+
+    if (config.respectRobots) {
+      await this.fetchRobotsTxt(this.baseOrigin);
+    }
 
     const crawlRecord: CrawlRecord = {
       id: this.crawlId,
@@ -173,6 +271,11 @@ export class CrawlOrchestrator extends EventEmitter {
 
     const baseUrl = new URL(config.startUrl);
     this.baseOrigin = baseUrl.origin;
+    this.robotsRules = null;
+
+    if (config.respectRobots) {
+      await this.fetchRobotsTxt(this.baseOrigin);
+    }
 
     // Rebuild visited set from already-crawled URLs
     const crawledUrls = getCrawledUrls(this.crawlId);
@@ -227,6 +330,9 @@ export class CrawlOrchestrator extends EventEmitter {
     try {
       const parsed = new URL(url);
       if (parsed.origin !== this.baseOrigin) return;
+
+      // robots.txt check
+      if (this.robotsRules && !isUrlAllowedByRobots(parsed.pathname, this.robotsRules)) return;
     } catch {
       return;
     }
@@ -293,6 +399,46 @@ export class CrawlOrchestrator extends EventEmitter {
       insertPage(result.page);
       if (result.links.length > 0) insertLinks(result.links);
       if (result.images.length > 0) insertImages(result.images);
+
+      // Store redirect chain
+      if (result.redirectChain.length > 0) {
+        const finalUrl = result.redirectChain[result.redirectChain.length - 1]?.url || url;
+        const redirectRows: RedirectData[] = result.redirectChain.map((hop, i) => ({
+          id: uuidv4(),
+          crawlId: this.crawlId,
+          sourceUrl: i === 0 ? url : result.redirectChain[i - 1].url,
+          targetUrl: hop.url,
+          statusCode: hop.statusCode,
+          hopNumber: i,
+          finalUrl,
+        }));
+        insertRedirects(redirectRows);
+      }
+
+      // Store hreflang entries
+      if (result.hreflang.length > 0) {
+        const hreflangRows: HreflangData[] = result.hreflang.map(h => ({
+          id: uuidv4(),
+          crawlId: this.crawlId,
+          pageUrl: url,
+          hreflang: h.hreflang,
+          href: h.href,
+        }));
+        insertHreflang(hreflangRows);
+      }
+
+      // Store custom extraction results
+      if (result.customExtractions.length > 0) {
+        const extractionRows: CustomExtractionResult[] = result.customExtractions.map(e => ({
+          id: uuidv4(),
+          crawlId: this.crawlId,
+          pageUrl: url,
+          ruleName: e.name,
+          selector: e.selector,
+          value: e.value,
+        }));
+        insertCustomExtractions(extractionRows);
+      }
 
       this.completedCount++;
       if (result.page.responseTimeMs) {

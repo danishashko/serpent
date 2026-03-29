@@ -1,12 +1,12 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import keytar from 'keytar';
-import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats } from './database';
+import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl } from './database';
 import { CrawlOrchestrator } from './crawler-orchestrator';
 import { testBrightDataConnection } from './crawler-brightdata';
-import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO } from './ai-analyzer';
+import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO, testAIProviderConnection, AIProviderConfig } from './ai-analyzer';
 import { querySerpBatch, storeSerpResults, getSerpResults } from './serp-client';
-import { IPC, CrawlConfig, AppSettings } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider } from '../types/index';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
 
@@ -189,6 +189,22 @@ ipcMain.handle(IPC.DATA_GET_IMAGES, (_event, crawlId: string) => {
   return getImagesByCrawl(crawlId);
 });
 
+ipcMain.handle(IPC.DATA_GET_REDIRECTS, (_event, crawlId: string) => {
+  return getRedirectsByCrawl(crawlId);
+});
+
+ipcMain.handle(IPC.DATA_GET_HREFLANG, (_event, crawlId: string) => {
+  return getHreflangByCrawl(crawlId);
+});
+
+ipcMain.handle(IPC.DATA_GET_DUPLICATES, (_event, crawlId: string) => {
+  return getDuplicatesByCrawl(crawlId);
+});
+
+ipcMain.handle(IPC.DATA_GET_CUSTOM_EXTRACTS, (_event, crawlId: string) => {
+  return getCustomExtractionsByCrawl(crawlId);
+});
+
 ipcMain.handle(IPC.DATA_EXPORT_CSV, async (_event, data: { rows: Record<string, unknown>[]; filename: string }) => {
   try {
     const { filePath } = await dialog.showSaveDialog({
@@ -239,14 +255,24 @@ ipcMain.handle(IPC.DATA_EXPORT_JSON, async (_event, data: { rows: Record<string,
 ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
   const bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+  const openaiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key');
+  const anthropicApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'anthropic_api_key');
+  const geminiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key');
 
   const settings: AppSettings = {
     brightDataApiKey: apiKey || null,
     brightDataZone: bdZone || 'web_unlocker1',
     maxCostPerCrawl: parseFloat(getConfig('max_cost_per_crawl') || '10'),
     maxCostPerDay: parseFloat(getConfig('max_cost_per_day') || '50'),
+    aiProvider: (getConfig('ai_provider') as AIProvider) || 'ollama',
     ollamaUrl: getConfig('ollama_url') || 'http://localhost:11434',
     ollamaModel: getConfig('ollama_model') || 'llama3',
+    openaiApiKey: openaiApiKey || null,
+    openaiModel: getConfig('openai_model') || 'gpt-4o-mini',
+    anthropicApiKey: anthropicApiKey || null,
+    anthropicModel: getConfig('anthropic_model') || 'claude-sonnet-4-20250514',
+    geminiApiKey: geminiApiKey || null,
+    geminiModel: getConfig('gemini_model') || 'gemini-2.0-flash',
     defaultEngine: (getConfig('default_engine') as AppSettings['defaultEngine']) || 'local',
     defaultStorageMode: (getConfig('default_storage_mode') as AppSettings['defaultStorageMode']) || 'database',
   };
@@ -270,6 +296,31 @@ ipcMain.handle(IPC.SETTINGS_SAVE, async (_event, settings: Partial<AppSettings>)
     if (settings.maxCostPerDay !== undefined) setConfig('max_cost_per_day', String(settings.maxCostPerDay));
     if (settings.ollamaUrl !== undefined) setConfig('ollama_url', settings.ollamaUrl);
     if (settings.ollamaModel !== undefined) setConfig('ollama_model', settings.ollamaModel);
+    if (settings.aiProvider !== undefined) setConfig('ai_provider', settings.aiProvider);
+    if (settings.openaiApiKey !== undefined) {
+      if (settings.openaiApiKey) {
+        await keytar.setPassword(KEYTAR_SERVICE, 'openai_api_key', settings.openaiApiKey);
+      } else {
+        await keytar.deletePassword(KEYTAR_SERVICE, 'openai_api_key').catch(() => {});
+      }
+    }
+    if (settings.openaiModel !== undefined) setConfig('openai_model', settings.openaiModel);
+    if (settings.anthropicApiKey !== undefined) {
+      if (settings.anthropicApiKey) {
+        await keytar.setPassword(KEYTAR_SERVICE, 'anthropic_api_key', settings.anthropicApiKey);
+      } else {
+        await keytar.deletePassword(KEYTAR_SERVICE, 'anthropic_api_key').catch(() => {});
+      }
+    }
+    if (settings.anthropicModel !== undefined) setConfig('anthropic_model', settings.anthropicModel);
+    if (settings.geminiApiKey !== undefined) {
+      if (settings.geminiApiKey) {
+        await keytar.setPassword(KEYTAR_SERVICE, 'gemini_api_key', settings.geminiApiKey);
+      } else {
+        await keytar.deletePassword(KEYTAR_SERVICE, 'gemini_api_key').catch(() => {});
+      }
+    }
+    if (settings.geminiModel !== undefined) setConfig('gemini_model', settings.geminiModel);
     if (settings.defaultEngine !== undefined) setConfig('default_engine', settings.defaultEngine);
     if (settings.defaultStorageMode !== undefined) setConfig('default_storage_mode', settings.defaultStorageMode);
 
@@ -290,12 +341,44 @@ ipcMain.handle(IPC.SETTINGS_TEST_OLLAMA, async (_event, url: string) => {
   return { success: ok, models };
 });
 
+ipcMain.handle(IPC.SETTINGS_TEST_AI_PROVIDER, async (_event, provider: AIProvider, config: { ollamaUrl?: string; apiKey?: string }) => {
+  return testAIProviderConnection(provider, config);
+});
+
 // ─── AI IPC Handlers ──────────────────────────────────────────────────────────
 
 ipcMain.handle(IPC.AI_ANALYZE, async (_event, crawlId: string) => {
   try {
-    const ollamaUrl = getConfig('ollama_url') || 'http://localhost:11434';
-    const ollamaModel = getConfig('ollama_model') || 'llama3';
+    const provider = (getConfig('ai_provider') as AIProvider) || 'ollama';
+    let providerConfig: AIProviderConfig;
+
+    switch (provider) {
+      case 'openai': {
+        const key = await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key');
+        if (!key) return { success: false, error: 'OpenAI API key not configured. Go to Settings.' };
+        providerConfig = { provider: 'openai', model: getConfig('openai_model') || 'gpt-4o-mini', apiKey: key };
+        break;
+      }
+      case 'anthropic': {
+        const key = await keytar.getPassword(KEYTAR_SERVICE, 'anthropic_api_key');
+        if (!key) return { success: false, error: 'Anthropic API key not configured. Go to Settings.' };
+        providerConfig = { provider: 'anthropic', model: getConfig('anthropic_model') || 'claude-sonnet-4-20250514', apiKey: key };
+        break;
+      }
+      case 'gemini': {
+        const key = await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key');
+        if (!key) return { success: false, error: 'Gemini API key not configured. Go to Settings.' };
+        providerConfig = { provider: 'gemini', model: getConfig('gemini_model') || 'gemini-2.0-flash', apiKey: key };
+        break;
+      }
+      default: {
+        providerConfig = {
+          provider: 'ollama',
+          model: getConfig('ollama_model') || 'llama3',
+          ollamaUrl: getConfig('ollama_url') || 'http://localhost:11434',
+        };
+      }
+    }
 
     const pages = getPagesByCrawl(crawlId);
     let analyzed = 0;
@@ -313,8 +396,8 @@ ipcMain.handle(IPC.AI_ANALYZE, async (_event, crawlId: string) => {
       };
 
       const [contentResult, technicalResult] = await Promise.all([
-        analyzeContentQuality(analysisInput, ollamaModel, ollamaUrl),
-        analyzeTechnicalSEO(analysisInput, ollamaModel, ollamaUrl),
+        analyzeContentQuality(analysisInput, providerConfig),
+        analyzeTechnicalSEO(analysisInput, providerConfig),
       ]);
 
       const now = new Date().toISOString();

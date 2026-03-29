@@ -4,6 +4,7 @@ export type CrawlEngine = 'local' | 'brightdata';
 export type CrawlMode = 'spider' | 'list';
 export type CrawlStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
 export type StorageMode = 'memory' | 'database';
+export type AIProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini';
 
 export interface CrawlConfig {
   startUrl: string;
@@ -32,6 +33,10 @@ export interface CrawlConfig {
   urlList?: string[];
   // Use JS rendering (hidden Electron BrowserWindow) for local crawls
   jsRender?: boolean;
+  // Hreflang extraction
+  extractHreflang?: boolean;
+  // Custom CSS selector extraction rules
+  customExtractions?: CustomExtractionRule[];
 }
 
 export type PageStatus = 'ok' | 'redirect' | 'error' | 'pending';
@@ -59,6 +64,7 @@ export interface PageData {
   crawlDepth: number;
   costUsd: number;
   createdAt: string;
+  contentHash: string | null;
 }
 
 export interface LinkData {
@@ -77,6 +83,38 @@ export interface ImageData {
   pageUrl: string;
   imageUrl: string;
   altText: string | null;
+}
+
+export interface RedirectData {
+  id: string;
+  crawlId: string;
+  sourceUrl: string;
+  targetUrl: string;
+  statusCode: number;
+  hopNumber: number;
+  finalUrl: string;
+}
+
+export interface HreflangData {
+  id: string;
+  crawlId: string;
+  pageUrl: string;
+  hreflang: string;
+  href: string;
+}
+
+export interface CustomExtractionRule {
+  name: string;
+  selector: string;
+}
+
+export interface CustomExtractionResult {
+  id: string;
+  crawlId: string;
+  pageUrl: string;
+  ruleName: string;
+  selector: string;
+  value: string | null;
 }
 
 export interface CrawlRecord {
@@ -143,8 +181,16 @@ export interface AppSettings {
   /** Alias for maxCostPerCrawl used by UI */
   costLimitUsd?: number;
   maxCostPerDay: number;
+  // AI Provider settings
+  aiProvider: AIProvider;
   ollamaUrl: string;
   ollamaModel: string;
+  openaiApiKey: string | null;
+  openaiModel: string;
+  anthropicApiKey: string | null;
+  anthropicModel: string;
+  geminiApiKey: string | null;
+  geminiModel: string;
   defaultEngine: CrawlEngine;
   defaultStorageMode: StorageMode;
 }
@@ -171,6 +217,10 @@ export const IPC = {
   DATA_GET_PAGES: 'data:get-pages',
   DATA_GET_LINKS: 'data:get-links',
   DATA_GET_IMAGES: 'data:get-images',
+  DATA_GET_REDIRECTS: 'data:get-redirects',
+  DATA_GET_HREFLANG: 'data:get-hreflang',
+  DATA_GET_DUPLICATES: 'data:get-duplicates',
+  DATA_GET_CUSTOM_EXTRACTS: 'data:get-custom-extracts',
   DATA_GET_CRAWLS: 'data:get-crawls',
   DATA_EXPORT_CSV: 'data:export-csv',
   DATA_EXPORT_JSON: 'data:export-json',
@@ -180,6 +230,7 @@ export const IPC = {
   SETTINGS_SAVE: 'settings:save',
   SETTINGS_TEST_BD: 'settings:test-brightdata',
   SETTINGS_TEST_OLLAMA: 'settings:test-ollama',
+  SETTINGS_TEST_AI_PROVIDER: 'settings:test-ai-provider',
 
   // AI
   AI_ANALYZE: 'ai:analyze',

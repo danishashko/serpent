@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
-import { PageData, LinkData, ImageData, CrawlRecord, AIAnalysis, UsageLog } from '../types/index';
+import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, UsageLog } from '../types/index';
 
 let db: Database.Database;
 
@@ -111,7 +111,48 @@ function createTables(): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS redirects (
+      id TEXT PRIMARY KEY,
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      source_url TEXT NOT NULL,
+      target_url TEXT NOT NULL,
+      status_code INTEGER NOT NULL,
+      hop_number INTEGER NOT NULL,
+      final_url TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_redirects_crawl_id ON redirects(crawl_id);
+    CREATE INDEX IF NOT EXISTS idx_redirects_source_url ON redirects(source_url);
+
+    CREATE TABLE IF NOT EXISTS hreflang (
+      id TEXT PRIMARY KEY,
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      page_url TEXT NOT NULL,
+      hreflang TEXT NOT NULL,
+      href TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_hreflang_crawl_id ON hreflang(crawl_id);
+
+    CREATE TABLE IF NOT EXISTS custom_extractions (
+      id TEXT PRIMARY KEY,
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      page_url TEXT NOT NULL,
+      rule_name TEXT NOT NULL,
+      selector TEXT NOT NULL,
+      value TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_custom_extractions_crawl_id ON custom_extractions(crawl_id);
   `);
+
+  // Add content_hash column if it doesn't exist (migration for existing DBs)
+  try {
+    db.exec('ALTER TABLE pages ADD COLUMN content_hash TEXT');
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 // ----- Crawl operations -----
@@ -174,13 +215,13 @@ export function insertPage(page: PageData): void {
       title, title_length, title_pixel_width,
       meta_description, meta_desc_length, meta_desc_pixel_width,
       h1, h2, word_count, canonical_url, is_canonicalized, is_indexable,
-      response_time_ms, page_size_bytes, crawl_depth, cost_usd, created_at
+      response_time_ms, page_size_bytes, crawl_depth, cost_usd, created_at, content_hash
     ) VALUES (
       @id, @crawlId, @url, @statusCode, @contentType,
       @title, @titleLength, @titlePixelWidth,
       @metaDescription, @metaDescLength, @metaDescPixelWidth,
       @h1, @h2, @wordCount, @canonicalUrl, @isCanonicalized, @isIndexable,
-      @responseTimeMs, @pageSizeBytes, @crawlDepth, @costUsd, @createdAt
+      @responseTimeMs, @pageSizeBytes, @crawlDepth, @costUsd, @createdAt, @contentHash
     )
   `).run({
     id: page.id,
@@ -205,6 +246,7 @@ export function insertPage(page: PageData): void {
     crawlDepth: page.crawlDepth,
     costUsd: page.costUsd,
     createdAt: page.createdAt,
+    contentHash: page.contentHash,
   });
 }
 
@@ -227,7 +269,8 @@ export function getPagesByCrawl(crawlId: string): PageData[] {
       word_count as wordCount, canonical_url as canonicalUrl,
       is_canonicalized as isCanonicalized, is_indexable as isIndexable,
       response_time_ms as responseTimeMs, page_size_bytes as pageSizeBytes,
-      crawl_depth as crawlDepth, cost_usd as costUsd, created_at as createdAt
+      crawl_depth as crawlDepth, cost_usd as costUsd, created_at as createdAt,
+      content_hash as contentHash
     FROM pages WHERE crawl_id = ? ORDER BY created_at ASC
   `).all(crawlId) as PageData[];
 }
@@ -343,6 +386,95 @@ export function getConfig(key: string): string | null {
 
 export function setConfig(key: string, value: string): void {
   db.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').run(key, value);
+}
+
+// ----- Redirect operations -----
+
+export function insertRedirects(redirects: RedirectData[]): void {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO redirects (id, crawl_id, source_url, target_url, status_code, hop_number, final_url)
+    VALUES (@id, @crawlId, @sourceUrl, @targetUrl, @statusCode, @hopNumber, @finalUrl)
+  `);
+  const insertMany = db.transaction((rows: RedirectData[]) => {
+    for (const row of rows) {
+      stmt.run({
+        id: row.id,
+        crawlId: row.crawlId,
+        sourceUrl: row.sourceUrl,
+        targetUrl: row.targetUrl,
+        statusCode: row.statusCode,
+        hopNumber: row.hopNumber,
+        finalUrl: row.finalUrl,
+      });
+    }
+  });
+  insertMany(redirects);
+}
+
+export function getRedirectsByCrawl(crawlId: string): RedirectData[] {
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, source_url as sourceUrl, target_url as targetUrl,
+      status_code as statusCode, hop_number as hopNumber, final_url as finalUrl
+    FROM redirects WHERE crawl_id = ? ORDER BY source_url, hop_number
+  `).all(crawlId) as RedirectData[];
+}
+
+// ----- Hreflang operations -----
+
+export function insertHreflang(entries: HreflangData[]): void {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO hreflang (id, crawl_id, page_url, hreflang, href)
+    VALUES (@id, @crawlId, @pageUrl, @hreflang, @href)
+  `);
+  const insertMany = db.transaction((rows: HreflangData[]) => {
+    for (const row of rows) {
+      stmt.run(row);
+    }
+  });
+  insertMany(entries);
+}
+
+export function getHreflangByCrawl(crawlId: string): HreflangData[] {
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, page_url as pageUrl, hreflang, href
+    FROM hreflang WHERE crawl_id = ? ORDER BY page_url, hreflang
+  `).all(crawlId) as HreflangData[];
+}
+
+// ----- Custom extraction operations -----
+
+export function insertCustomExtractions(extractions: CustomExtractionResult[]): void {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO custom_extractions (id, crawl_id, page_url, rule_name, selector, value)
+    VALUES (@id, @crawlId, @pageUrl, @ruleName, @selector, @value)
+  `);
+  const insertMany = db.transaction((rows: CustomExtractionResult[]) => {
+    for (const row of rows) {
+      stmt.run(row);
+    }
+  });
+  insertMany(extractions);
+}
+
+export function getCustomExtractionsByCrawl(crawlId: string): CustomExtractionResult[] {
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, page_url as pageUrl, rule_name as ruleName, selector, value
+    FROM custom_extractions WHERE crawl_id = ? ORDER BY page_url, rule_name
+  `).all(crawlId) as CustomExtractionResult[];
+}
+
+// ----- Duplicate content detection -----
+
+export function getDuplicatesByCrawl(crawlId: string): { contentHash: string; urls: string[] }[] {
+  const rows = db.prepare(`
+    SELECT content_hash as contentHash, GROUP_CONCAT(url) as urls
+    FROM pages
+    WHERE crawl_id = ? AND content_hash IS NOT NULL
+    GROUP BY content_hash
+    HAVING COUNT(*) > 1
+    ORDER BY COUNT(*) DESC
+  `).all(crawlId) as { contentHash: string; urls: string }[];
+  return rows.map(r => ({ contentHash: r.contentHash, urls: r.urls.split(',') }));
 }
 
 export function closeDatabase(): void {

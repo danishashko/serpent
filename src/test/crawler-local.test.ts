@@ -321,4 +321,277 @@ describe('crawlPageLocal', () => {
       expect(page.pageSizeBytes).toBeGreaterThan(0);
     });
   });
+
+  // ── Redirect chain detection ──
+
+  describe('redirect chain detection', () => {
+    it('captures a 301 redirect chain with multiple hops', async () => {
+      // Hop 1: 301 → /new-page
+      axiosMock.mockResolvedValueOnce({
+        status: 301,
+        headers: { 'content-type': 'text/html', location: 'https://example.com/new-page' },
+        data: '',
+      } as never);
+      // Hop 2: 302 → /final-page
+      axiosMock.mockResolvedValueOnce({
+        status: 302,
+        headers: { 'content-type': 'text/html', location: 'https://example.com/final-page' },
+        data: '',
+      } as never);
+      // Hop 3: 200 (final)
+      axiosMock.mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+        data: '<html><head><title>Final</title></head><body>Done</body></html>',
+      } as never);
+
+      const { redirectChain, page } = await crawlPageLocal(
+        'https://example.com/old-page', crawlId, 0, BASE_CONFIG, baseOrigin
+      );
+
+      expect(redirectChain.length).toBe(3);
+      expect(redirectChain[0]).toEqual({ url: 'https://example.com/old-page', statusCode: 301 });
+      expect(redirectChain[1]).toEqual({ url: 'https://example.com/new-page', statusCode: 302 });
+      expect(redirectChain[2]).toEqual({ url: 'https://example.com/final-page', statusCode: 200 });
+      expect(page.statusCode).toBe(200);
+    });
+
+    it('returns empty chain when no redirects occur', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { redirectChain } = await crawlPageLocal(
+        'https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin
+      );
+      expect(redirectChain).toHaveLength(0);
+    });
+
+    it('does not follow redirects when followRedirects is disabled', async () => {
+      const noRedirectConfig = { ...BASE_CONFIG, followRedirects: false };
+      axiosMock.mockResolvedValueOnce({
+        status: 301,
+        headers: { 'content-type': 'text/html', location: 'https://example.com/new' },
+        data: '',
+      } as never);
+
+      const { redirectChain, page } = await crawlPageLocal(
+        'https://example.com/old', crawlId, 0, noRedirectConfig, baseOrigin
+      );
+
+      // With followRedirects=false, maxHops=0, so the loop runs once and breaks
+      expect(redirectChain).toHaveLength(0);
+      expect(page.statusCode).toBe(301);
+    });
+
+    it('resolves relative redirect locations', async () => {
+      axiosMock.mockResolvedValueOnce({
+        status: 301,
+        headers: { 'content-type': 'text/html', location: '/target' },
+        data: '',
+      } as never);
+      axiosMock.mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+        data: '<html><body>OK</body></html>',
+      } as never);
+
+      const { redirectChain } = await crawlPageLocal(
+        'https://example.com/start', crawlId, 0, BASE_CONFIG, baseOrigin
+      );
+
+      expect(redirectChain.length).toBe(2);
+      expect(redirectChain[0].url).toBe('https://example.com/start');
+      expect(redirectChain[1].url).toBe('https://example.com/target');
+    });
+  });
+
+  // ── Hreflang extraction ──
+
+  describe('hreflang extraction', () => {
+    const HREFLANG_PAGE = `
+    <html><head>
+      <title>International Page</title>
+      <link rel="alternate" hreflang="en" href="https://example.com/en/">
+      <link rel="alternate" hreflang="es" href="https://example.com/es/">
+      <link rel="alternate" hreflang="x-default" href="https://example.com/">
+    </head><body><p>Hello</p></body></html>`;
+
+    it('extracts hreflang entries when extractHreflang is enabled', async () => {
+      mockResponse(HREFLANG_PAGE);
+      const cfg = { ...BASE_CONFIG, extractHreflang: true };
+      const { hreflang } = await crawlPageLocal(
+        'https://example.com/', crawlId, 0, cfg, baseOrigin
+      );
+
+      expect(hreflang).toHaveLength(3);
+      expect(hreflang).toContainEqual({ hreflang: 'en', href: 'https://example.com/en/' });
+      expect(hreflang).toContainEqual({ hreflang: 'es', href: 'https://example.com/es/' });
+      expect(hreflang).toContainEqual({ hreflang: 'x-default', href: 'https://example.com/' });
+    });
+
+    it('returns empty hreflang when extractHreflang is disabled', async () => {
+      mockResponse(HREFLANG_PAGE);
+      const { hreflang } = await crawlPageLocal(
+        'https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin
+      );
+      expect(hreflang).toHaveLength(0);
+    });
+
+    it('resolves relative hreflang hrefs', async () => {
+      const html = `<html><head>
+        <link rel="alternate" hreflang="fr" href="/fr/">
+      </head><body>Hi</body></html>`;
+      mockResponse(html);
+      const cfg = { ...BASE_CONFIG, extractHreflang: true };
+      const { hreflang } = await crawlPageLocal(
+        'https://example.com/page', crawlId, 0, cfg, baseOrigin
+      );
+
+      expect(hreflang).toHaveLength(1);
+      expect(hreflang[0].href).toBe('https://example.com/fr/');
+    });
+
+    it('skips hreflang links missing hreflang or href attributes', async () => {
+      const html = `<html><head>
+        <link rel="alternate" hreflang="en" href="https://example.com/en/">
+        <link rel="alternate" hreflang="" href="https://example.com/empty/">
+        <link rel="alternate" hreflang="de">
+      </head><body>Hi</body></html>`;
+      mockResponse(html);
+      const cfg = { ...BASE_CONFIG, extractHreflang: true };
+      const { hreflang } = await crawlPageLocal(
+        'https://example.com/', crawlId, 0, cfg, baseOrigin
+      );
+
+      // Only the first entry has both valid hreflang and href
+      expect(hreflang).toHaveLength(1);
+      expect(hreflang[0].hreflang).toBe('en');
+    });
+  });
+
+  // ── Content hash / duplicate detection ──
+
+  describe('content hash', () => {
+    it('generates SHA-256 content hash from body text', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { contentHash } = await crawlPageLocal(
+        'https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin
+      );
+
+      expect(contentHash).not.toBeNull();
+      expect(contentHash).toMatch(/^[a-f0-9]{64}$/); // valid SHA-256 hex
+    });
+
+    it('produces identical hashes for identical body content', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const result1 = await crawlPageLocal('https://example.com/a', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      mockResponse(SIMPLE_PAGE);
+      const result2 = await crawlPageLocal('https://example.com/b', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(result1.contentHash).toBe(result2.contentHash);
+    });
+
+    it('produces different hashes for different content', async () => {
+      mockResponse('<html><body>Content A is unique text</body></html>');
+      const result1 = await crawlPageLocal('https://example.com/a', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      mockResponse('<html><body>Content B is different text</body></html>');
+      const result2 = await crawlPageLocal('https://example.com/b', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(result1.contentHash).not.toBe(result2.contentHash);
+    });
+
+    it('returns null hash for non-HTML responses', async () => {
+      axiosMock.mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+        data: '%PDF-1.4 data',
+      } as never);
+
+      const { contentHash } = await crawlPageLocal(
+        'https://example.com/doc.pdf', crawlId, 0, BASE_CONFIG, baseOrigin
+      );
+      expect(contentHash).toBeNull();
+    });
+  });
+
+  // ── Custom CSS extraction ──
+
+  describe('custom CSS extraction', () => {
+    const STRUCTURED_PAGE = `
+    <html><head>
+      <title>Product Page</title>
+      <meta name="author" content="John Doe">
+    </head><body>
+      <h1 class="product-name">Widget Pro</h1>
+      <span class="price">$29.99</span>
+      <div class="description">A great widget for all your needs.</div>
+      <span class="missing-class">Not matched</span>
+    </body></html>`;
+
+    it('extracts text from CSS selectors', async () => {
+      const cfg: CrawlConfig = {
+        ...BASE_CONFIG,
+        customExtractions: [
+          { name: 'Product Name', selector: 'h1.product-name' },
+          { name: 'Price', selector: 'span.price' },
+        ],
+      };
+      mockResponse(STRUCTURED_PAGE);
+      const { customExtractions } = await crawlPageLocal(
+        'https://example.com/product', crawlId, 0, cfg, baseOrigin
+      );
+
+      expect(customExtractions).toHaveLength(2);
+      expect(customExtractions[0]).toEqual({
+        name: 'Product Name',
+        selector: 'h1.product-name',
+        value: 'Widget Pro',
+      });
+      expect(customExtractions[1]).toEqual({
+        name: 'Price',
+        selector: 'span.price',
+        value: '$29.99',
+      });
+    });
+
+    it('falls back to content attribute when text is empty', async () => {
+      const cfg: CrawlConfig = {
+        ...BASE_CONFIG,
+        customExtractions: [
+          { name: 'Author', selector: 'meta[name="author"]' },
+        ],
+      };
+      mockResponse(STRUCTURED_PAGE);
+      const { customExtractions } = await crawlPageLocal(
+        'https://example.com/product', crawlId, 0, cfg, baseOrigin
+      );
+
+      expect(customExtractions).toHaveLength(1);
+      expect(customExtractions[0].value).toBe('John Doe');
+    });
+
+    it('returns null when selector matches no elements', async () => {
+      const cfg: CrawlConfig = {
+        ...BASE_CONFIG,
+        customExtractions: [
+          { name: 'SKU', selector: '.sku-number' },
+        ],
+      };
+      mockResponse(STRUCTURED_PAGE);
+      const { customExtractions } = await crawlPageLocal(
+        'https://example.com/product', crawlId, 0, cfg, baseOrigin
+      );
+
+      expect(customExtractions).toHaveLength(1);
+      expect(customExtractions[0].value).toBeNull();
+    });
+
+    it('returns empty array when no custom extraction rules configured', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { customExtractions } = await crawlPageLocal(
+        'https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin
+      );
+      expect(customExtractions).toHaveLength(0);
+    });
+  });
 });

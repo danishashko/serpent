@@ -4,7 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -39,12 +39,17 @@ declare global {
       getPages: (crawlId: string) => Promise<PageData[]>;
       getLinks: (crawlId: string) => Promise<LinkData[]>;
       getImages: (crawlId: string) => Promise<ImageData[]>;
+      getRedirects: (crawlId: string) => Promise<RedirectData[]>;
+      getHreflang: (crawlId: string) => Promise<HreflangData[]>;
+      getDuplicates: (crawlId: string) => Promise<{ contentHash: string; urls: string[] }[]>;
+      getCustomExtracts: (crawlId: string) => Promise<CustomExtractionResult[]>;
       exportCsv: (data: { rows: Record<string, unknown>[]; filename: string }) => Promise<{ success: boolean }>;
       exportJson: (data: { rows: Record<string, unknown>[]; filename: string }) => Promise<{ success: boolean }>;
       getSettings: () => Promise<unknown>;
       saveSettings: (settings: unknown) => Promise<{ success: boolean; error?: string }>;
       testBrightData: (apiKey: string, zone: string) => Promise<{ success: boolean }>;
       testOllama: (url: string) => Promise<{ success: boolean; models: unknown[] }>;
+      testAIProvider: (provider: string, config: { ollamaUrl?: string; apiKey?: string }) => Promise<{ success: boolean; models?: string[] }>;
       aiAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
       aiGetResults: (pageId: string) => Promise<unknown[]>;
       getIncompleteCrawl: () => Promise<{ id: string; startUrl: string; completedUrls: number; totalUrls: number; status: string } | null>;
@@ -69,6 +74,10 @@ export default function App(): React.ReactElement {
   const [crawlTab, setCrawlTab] = useState<CrawlTab>('results');
   const [serpResults, setSerpResults] = useState<SerpResultRow[]>([]);
   const [serpLoading, setSerpLoading] = useState(false);
+  const [redirects, setRedirects] = useState<RedirectData[]>([]);
+  const [hreflang, setHreflang] = useState<HreflangData[]>([]);
+  const [duplicates, setDuplicates] = useState<{ contentHash: string; urls: string[] }[]>([]);
+  const [customExtracts, setCustomExtracts] = useState<CustomExtractionResult[]>([]);
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = toastCounter + 1;
@@ -78,14 +87,22 @@ export default function App(): React.ReactElement {
   }, [toastCounter]);
 
   const loadCrawlData = useCallback(async (crawlId: string) => {
-    const [p, l, i] = await Promise.all([
+    const [p, l, i, r, h, d, ce] = await Promise.all([
       window.api.getPages(crawlId),
       window.api.getLinks(crawlId),
       window.api.getImages(crawlId),
+      window.api.getRedirects(crawlId),
+      window.api.getHreflang(crawlId),
+      window.api.getDuplicates(crawlId),
+      window.api.getCustomExtracts(crawlId),
     ]);
     setPages(p);
     setLinks(l);
     setImages(i);
+    setRedirects(r);
+    setHreflang(h);
+    setDuplicates(d);
+    setCustomExtracts(ce);
     // Load SERP results (non-blocking)
     window.api.serpGetResults(crawlId).then(results => {
       setSerpResults(results as SerpResultRow[]);
@@ -155,6 +172,10 @@ export default function App(): React.ReactElement {
     setLinks([]);
     setImages([]);
     setSerpResults([]);
+    setRedirects([]);
+    setHreflang([]);
+    setDuplicates([]);
+    setCustomExtracts([]);
   };
 
   const handleSerpQuery = async (keywords: string[], location?: string, device?: 'desktop' | 'mobile') => {
@@ -285,6 +306,10 @@ export default function App(): React.ReactElement {
                   links={links}
                   images={images}
                   serpResults={serpResults}
+                  redirects={redirects}
+                  hreflang={hreflang}
+                  duplicates={duplicates}
+                  customExtracts={customExtracts}
                   crawlId={activeCrawlId}
                   showToast={showToast}
                   onSerpQuery={handleSerpQuery}

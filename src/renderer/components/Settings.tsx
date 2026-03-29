@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppSettings } from '../../types/index';
+import { AppSettings, AIProvider } from '../../types/index';
 
 interface Props {
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
@@ -10,22 +10,37 @@ const defaultSettings: AppSettings = {
   brightDataZone: 'web_unlocker1',
   maxCostPerCrawl: 5.0,
   maxCostPerDay: 20.0,
+  aiProvider: 'ollama',
   ollamaUrl: 'http://localhost:11434',
   ollamaModel: 'llama3',
+  openaiApiKey: null,
+  openaiModel: 'gpt-4o-mini',
+  anthropicApiKey: null,
+  anthropicModel: 'claude-sonnet-4-20250514',
+  geminiApiKey: null,
+  geminiModel: 'gemini-2.0-flash',
   defaultEngine: 'local',
   defaultStorageMode: 'database',
 };
+
+const AI_PROVIDERS: { value: AIProvider; label: string; icon: string }[] = [
+  { value: 'ollama', label: 'Ollama (Local)', icon: '🏠' },
+  { value: 'openai', label: 'OpenAI', icon: '🟢' },
+  { value: 'anthropic', label: 'Anthropic', icon: '🟠' },
+  { value: 'gemini', label: 'Google Gemini', icon: '🔵' },
+];
 
 export default function Settings({ showToast }: Props): React.ReactElement {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingBd, setTestingBd] = useState(false);
-  const [testingOllama, setTestingOllama] = useState(false);
+  const [testingAI, setTestingAI] = useState(false);
   const [bdStatus, setBdStatus] = useState<'untested' | 'ok' | 'fail'>('untested');
-  const [ollamaStatus, setOllamaStatus] = useState<'untested' | 'ok' | 'fail'>('untested');
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [aiStatus, setAiStatus] = useState<'untested' | 'ok' | 'fail'>('untested');
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [showBdKey, setShowBdKey] = useState(false);
+  const [showAiKey, setShowAiKey] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -70,21 +85,41 @@ export default function Settings({ showToast }: Props): React.ReactElement {
     }
   };
 
-  const handleTestOllama = async () => {
-    setTestingOllama(true);
-    setOllamaStatus('untested');
+  const handleTestAI = async () => {
+    const provider = settings.aiProvider ?? 'ollama';
+    let config: { ollamaUrl?: string; apiKey?: string } = {};
+
+    if (provider === 'ollama') {
+      config = { ollamaUrl: settings.ollamaUrl ?? 'http://localhost:11434' };
+    } else {
+      const keyMap: Record<string, string | null | undefined> = {
+        openai: settings.openaiApiKey,
+        anthropic: settings.anthropicApiKey,
+        gemini: settings.geminiApiKey,
+      };
+      const key = keyMap[provider];
+      if (!key) {
+        showToast('Enter API key first', 'error');
+        return;
+      }
+      config = { apiKey: key };
+    }
+
+    setTestingAI(true);
+    setAiStatus('untested');
     try {
-      const result = await window.api.testOllama(settings.ollamaUrl ?? 'http://localhost:11434');
-      setOllamaStatus(result.success ? 'ok' : 'fail');
+      const result = await window.api.testAIProvider(provider, config);
+      setAiStatus(result.success ? 'ok' : 'fail');
       if (result.success) {
-        const models = (result.models as { name: string }[]).map(m => m.name);
-        setOllamaModels(models);
-        showToast(`Ollama OK — ${models.length} model(s) found`, 'success');
+        const models = (result.models ?? []) as string[];
+        setDiscoveredModels(models);
+        showToast(`${AI_PROVIDERS.find(p => p.value === provider)?.label} OK — ${models.length} model(s) available`, 'success');
       } else {
-        showToast('Ollama not reachable — is it running?', 'error');
+        setDiscoveredModels([]);
+        showToast(`${AI_PROVIDERS.find(p => p.value === provider)?.label} connection failed`, 'error');
       }
     } finally {
-      setTestingOllama(false);
+      setTestingAI(false);
     }
   };
 
@@ -94,11 +129,28 @@ export default function Settings({ showToast }: Props): React.ReactElement {
     return null;
   };
 
+  // Determine which model field key corresponds to the selected provider
+  const modelFieldKey = (): keyof AppSettings => {
+    switch (settings.aiProvider) {
+      case 'openai': return 'openaiModel';
+      case 'anthropic': return 'anthropicModel';
+      case 'gemini': return 'geminiModel';
+      default: return 'ollamaModel';
+    }
+  };
+
+  const currentModel = (): string => {
+    return (settings[modelFieldKey()] as string) ?? '';
+  };
+
   if (loading) return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <span className="spinner" />
     </div>
   );
+
+  const selectedProvider = settings.aiProvider ?? 'ollama';
+  const isCloudProvider = selectedProvider !== 'ollama';
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: 24, maxWidth: 600 }}>
@@ -162,33 +214,92 @@ export default function Settings({ showToast }: Props): React.ReactElement {
         </div>
       </section>
 
-      {/* Ollama section */}
+      {/* AI Provider section */}
       <section style={{ marginBottom: 28 }}>
         <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-          🤖 Ollama (Local AI)
-          {statusBadge(ollamaStatus)}
+          🤖 AI Analysis Provider
+          {statusBadge(aiStatus)}
         </h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+          {/* Provider selector */}
           <div>
-            <label className="label">Ollama URL</label>
-            <input
+            <label className="label">Provider</label>
+            <select
               className="input"
-              type="url"
-              placeholder="http://localhost:11434"
-              value={settings.ollamaUrl ?? 'http://localhost:11434'}
-              onChange={e => set('ollamaUrl', e.target.value)}
-            />
+              value={selectedProvider}
+              onChange={e => {
+                set('aiProvider', e.target.value as AIProvider);
+                setAiStatus('untested');
+                setDiscoveredModels([]);
+              }}
+              style={{ cursor: 'pointer' }}
+            >
+              {AI_PROVIDERS.map(p => (
+                <option key={p.value} value={p.value}>{p.icon} {p.label}</option>
+              ))}
+            </select>
           </div>
+
+          {/* Ollama-specific: URL */}
+          {selectedProvider === 'ollama' && (
+            <div>
+              <label className="label">Ollama URL</label>
+              <input
+                className="input"
+                type="url"
+                placeholder="http://localhost:11434"
+                value={settings.ollamaUrl ?? 'http://localhost:11434'}
+                onChange={e => set('ollamaUrl', e.target.value)}
+              />
+              <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                Run <code style={{ color: 'var(--text-secondary)' }}>ollama serve</code> locally.
+                Download models: <code style={{ color: 'var(--text-secondary)' }}>ollama pull llama3</code>
+              </p>
+            </div>
+          )}
+
+          {/* Cloud providers: API Key */}
+          {isCloudProvider && (
+            <div>
+              <label className="label">
+                {AI_PROVIDERS.find(p => p.value === selectedProvider)?.label} API Key
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  className="input"
+                  type={showAiKey ? 'text' : 'password'}
+                  placeholder={`Enter your ${selectedProvider} API key`}
+                  value={
+                    selectedProvider === 'openai' ? (settings.openaiApiKey ?? '') :
+                    selectedProvider === 'anthropic' ? (settings.anthropicApiKey ?? '') :
+                    (settings.geminiApiKey ?? '')
+                  }
+                  onChange={e => {
+                    const key = selectedProvider === 'openai' ? 'openaiApiKey' :
+                                selectedProvider === 'anthropic' ? 'anthropicApiKey' : 'geminiApiKey';
+                    set(key, e.target.value);
+                  }}
+                  style={{ flex: 1, fontFamily: 'monospace' }}
+                />
+                <button className="btn-ghost" onClick={() => setShowAiKey(v => !v)} style={{ fontSize: 12, padding: '0 10px' }}>
+                  {showAiKey ? '🙈' : '👁'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Model selection */}
           <div>
-            <label className="label">Default Model</label>
-            {ollamaModels.length > 0 ? (
+            <label className="label">Model</label>
+            {discoveredModels.length > 0 ? (
               <select
                 className="input"
-                value={settings.ollamaModel ?? 'llama3'}
-                onChange={e => set('ollamaModel', e.target.value)}
+                value={currentModel()}
+                onChange={e => set(modelFieldKey(), e.target.value)}
                 style={{ cursor: 'pointer' }}
               >
-                {ollamaModels.map(m => (
+                {discoveredModels.map(m => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
@@ -196,29 +307,32 @@ export default function Settings({ showToast }: Props): React.ReactElement {
               <input
                 className="input"
                 type="text"
-                placeholder="llama3"
-                value={settings.ollamaModel ?? 'llama3'}
-                onChange={e => set('ollamaModel', e.target.value)}
+                placeholder={
+                  selectedProvider === 'ollama' ? 'llama3' :
+                  selectedProvider === 'openai' ? 'gpt-4o-mini' :
+                  selectedProvider === 'anthropic' ? 'claude-sonnet-4-20250514' :
+                  'gemini-2.0-flash'
+                }
+                value={currentModel()}
+                onChange={e => set(modelFieldKey(), e.target.value)}
               />
             )}
+            {discoveredModels.length > 0 && (
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                {discoveredModels.length} model(s) available
+              </p>
+            )}
           </div>
+
+          {/* Test button */}
           <button
             className="btn-ghost"
             style={{ alignSelf: 'flex-start', fontSize: 12 }}
-            onClick={handleTestOllama}
-            disabled={testingOllama}
+            onClick={handleTestAI}
+            disabled={testingAI}
           >
-            {testingOllama ? <><span className="spinner" /> Testing…</> : '🔌 Test Ollama'}
+            {testingAI ? <><span className="spinner" /> Testing…</> : `🔌 Test ${AI_PROVIDERS.find(p => p.value === selectedProvider)?.label}`}
           </button>
-          {ollamaModels.length > 0 && (
-            <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              Available: {ollamaModels.join(', ')}
-            </p>
-          )}
-          <p style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-            Run <code style={{ color: 'var(--text-secondary)' }}>ollama serve</code> locally for AI-powered SEO analysis.
-            Download models with <code style={{ color: 'var(--text-secondary)' }}>ollama pull llama3</code>.
-          </p>
         </div>
       </section>
 

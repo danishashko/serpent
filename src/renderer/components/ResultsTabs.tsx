@@ -1,18 +1,22 @@
 import React, { useState, useMemo } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow } from '../../types/index';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult } from '../../types/index';
 
 interface Props {
   pages: PageData[];
   links: LinkData[];
   images: ImageData[];
   serpResults: SerpResultRow[];
+  redirects: RedirectData[];
+  hreflang: HreflangData[];
+  duplicates: { contentHash: string; urls: string[] }[];
+  customExtracts: CustomExtractionResult[];
   crawlId: string | null;
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
   onSerpQuery?: (keywords: string[], location?: string, device?: 'desktop' | 'mobile') => void;
   serpLoading?: boolean;
 }
 
-type Tab = 'pages' | 'links' | 'images' | 'issues' | 'serp';
+type Tab = 'pages' | 'links' | 'images' | 'issues' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp';
 type IssueFilter =
   | 'all'
   | 'missing_title'
@@ -43,7 +47,7 @@ const statusColor = (code: number): string => {
   return 'var(--text-muted)';
 };
 
-export default function ResultsTabs({ pages, links, images, serpResults, crawlId, showToast, onSerpQuery, serpLoading }: Props): React.ReactElement {
+export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, crawlId, showToast, onSerpQuery, serpLoading }: Props): React.ReactElement {
   const [tab, setTab] = useState<Tab>('pages');
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
   const [search, setSearch] = useState('');
@@ -166,6 +170,41 @@ export default function ResultsTabs({ pages, links, images, serpResults, crawlId
         filename: `${prefix}-serp.${ext}`,
       };
     }
+    if (tab === 'redirects') {
+      const filtered = redirects.filter(r => !search || r.sourceUrl.toLowerCase().includes(search.toLowerCase()) || r.targetUrl.toLowerCase().includes(search.toLowerCase()));
+      return {
+        rows: filtered.map(r => ({
+          source_url: r.sourceUrl, target_url: r.targetUrl, status_code: r.statusCode, hop_number: r.hopNumber, final_url: r.finalUrl,
+        })),
+        filename: `${prefix}-redirects.${ext}`,
+      };
+    }
+    if (tab === 'hreflang') {
+      const filtered = hreflang.filter(h => !search || h.pageUrl.toLowerCase().includes(search.toLowerCase()) || h.hreflang.toLowerCase().includes(search.toLowerCase()));
+      return {
+        rows: filtered.map(h => ({
+          page_url: h.pageUrl, hreflang: h.hreflang, href: h.href,
+        })),
+        filename: `${prefix}-hreflang.${ext}`,
+      };
+    }
+    if (tab === 'duplicates') {
+      return {
+        rows: duplicates.map(d => ({
+          content_hash: d.contentHash, urls: d.urls.join(' | '), count: d.urls.length,
+        })),
+        filename: `${prefix}-duplicates.${ext}`,
+      };
+    }
+    if (tab === 'extractions') {
+      const filtered = customExtracts.filter(e => !search || e.pageUrl.toLowerCase().includes(search.toLowerCase()) || e.ruleName.toLowerCase().includes(search.toLowerCase()));
+      return {
+        rows: filtered.map(e => ({
+          page_url: e.pageUrl, rule_name: e.ruleName, selector: e.selector, value: e.value ?? '',
+        })),
+        filename: `${prefix}-extractions.${ext}`,
+      };
+    }
     return { rows: [], filename: '' };
   };
 
@@ -186,7 +225,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, crawlId
     </th>
   );
 
-  const tabs: Tab[] = ['pages', 'links', 'images', 'issues', 'serp'];
+  const tabs: Tab[] = ['pages', 'links', 'images', 'issues', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp'];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -217,6 +256,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, crawlId
               {t === 'links' && `Links (${links.length})`}
               {t === 'images' && `Images (${images.length})`}
               {t === 'issues' && `Issues (${issueCounts.broken + issueCounts.missing_title + issueCounts.missing_h1 + issueCounts.noindex})`}
+              {t === 'redirects' && `Redirects (${redirects.length})`}
+              {t === 'hreflang' && `Hreflang (${hreflang.length})`}
+              {t === 'duplicates' && `Duplicates (${duplicates.length})`}
+              {t === 'extractions' && `Extractions (${customExtracts.length})`}
               {t === 'serp' && `SERP (${serpResults.length})`}
             </button>
           ))}
@@ -412,6 +455,132 @@ export default function ResultsTabs({ pages, links, images, serpResults, crawlId
           </table>
         )}
 
+        {tab === 'redirects' && (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Source URL</th>
+                <th>Target URL</th>
+                <th>Status</th>
+                <th>Hop #</th>
+                <th>Final URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {redirects.length === 0 ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No redirect chains detected</td></tr>
+              ) : redirects
+                .filter(r => !search || r.sourceUrl.toLowerCase().includes(search.toLowerCase()) || r.targetUrl.toLowerCase().includes(search.toLowerCase()))
+                .map((r, i) => (
+                <tr key={i}>
+                  <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <a href={r.sourceUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{r.sourceUrl}</a>
+                  </td>
+                  <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <a href={r.targetUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{r.targetUrl}</a>
+                  </td>
+                  <td style={{ color: statusColor(r.statusCode), fontWeight: 600 }}>{r.statusCode}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{r.hopNumber}</td>
+                  <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
+                    {r.finalUrl}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {tab === 'hreflang' && (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Page URL</th>
+                <th>Hreflang</th>
+                <th>Href</th>
+              </tr>
+            </thead>
+            <tbody>
+              {hreflang.length === 0 ? (
+                <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No hreflang tags found</td></tr>
+              ) : hreflang
+                .filter(h => !search || h.pageUrl.toLowerCase().includes(search.toLowerCase()) || h.hreflang.toLowerCase().includes(search.toLowerCase()))
+                .map((h, i) => (
+                <tr key={i}>
+                  <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <a href={h.pageUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{h.pageUrl}</a>
+                  </td>
+                  <td style={{ fontWeight: 500 }}>{h.hreflang}</td>
+                  <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <a href={h.href} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{h.href}</a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {tab === 'duplicates' && (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Content Hash</th>
+                <th>Duplicate URLs</th>
+                <th>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {duplicates.length === 0 ? (
+                <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No duplicate content detected</td></tr>
+              ) : duplicates
+                .filter(d => !search || d.urls.some(u => u.toLowerCase().includes(search.toLowerCase())) || d.contentHash.toLowerCase().includes(search.toLowerCase()))
+                .map((d, i) => (
+                <tr key={i}>
+                  <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)' }}>{d.contentHash.slice(0, 16)}…</td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {d.urls.map((u, j) => (
+                        <a key={j} href={u} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none', fontSize: 12 }}>{u}</a>
+                      ))}
+                    </div>
+                  </td>
+                  <td style={{ fontWeight: 600, color: 'var(--accent-red)' }}>{d.urls.length}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {tab === 'extractions' && (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Page URL</th>
+                <th>Rule Name</th>
+                <th>Selector</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {customExtracts.length === 0 ? (
+                <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No custom extractions configured</td></tr>
+              ) : customExtracts
+                .filter(e => !search || e.pageUrl.toLowerCase().includes(search.toLowerCase()) || e.ruleName.toLowerCase().includes(search.toLowerCase()))
+                .map((e, i) => (
+                <tr key={i}>
+                  <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <a href={e.pageUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{e.pageUrl}</a>
+                  </td>
+                  <td style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>{e.ruleName}</td>
+                  <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)' }}>{e.selector}</td>
+                  <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {e.value ?? <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>null</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
         {tab === 'serp' && (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             {/* SERP keyword input */}
@@ -526,6 +695,27 @@ export default function ResultsTabs({ pages, links, images, serpResults, crawlId
             <span>Keywords: {new Set(serpResults.map(s => s.keyword)).size}</span>
             <span style={{ color: 'var(--accent-green)' }}>Top 3: {serpResults.filter(s => s.position <= 3).length}</span>
             <span style={{ color: 'var(--accent-blue)' }}>Top 10: {serpResults.filter(s => s.position <= 10).length}</span>
+          </>
+        ) : tab === 'redirects' ? (
+          <>
+            <span>Total: {redirects.length}</span>
+            <span>Chains: {new Set(redirects.map(r => r.sourceUrl)).size}</span>
+          </>
+        ) : tab === 'hreflang' ? (
+          <>
+            <span>Total: {hreflang.length}</span>
+            <span>Pages: {new Set(hreflang.map(h => h.pageUrl)).size}</span>
+            <span>Languages: {new Set(hreflang.map(h => h.hreflang)).size}</span>
+          </>
+        ) : tab === 'duplicates' ? (
+          <>
+            <span>Groups: {duplicates.length}</span>
+            <span style={{ color: 'var(--accent-red)' }}>Duplicate URLs: {duplicates.reduce((s, d) => s + d.urls.length, 0)}</span>
+          </>
+        ) : tab === 'extractions' ? (
+          <>
+            <span>Total: {customExtracts.length}</span>
+            <span>Rules: {new Set(customExtracts.map(e => e.ruleName)).size}</span>
           </>
         ) : (
           <>

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { URL } from 'url';
+import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { CrawlConfig, PageData, LinkData, ImageData } from '../types/index';
 import { CrawlResult } from './crawler-local';
@@ -72,6 +73,9 @@ export async function crawlPageBrightData(
   let canonicalUrl: string | null = null;
   let isCanonicalized = false;
   let robotsMeta: string | null = null;
+  const hreflangEntries: { hreflang: string; href: string }[] = [];
+  let contentHash: string | null = null;
+  const customExtractionResults: { name: string; selector: string; value: string | null }[] = [];
 
   if (html) {
     const $ = cheerio.load(html);
@@ -149,6 +153,40 @@ export async function crawlPageBrightData(
         }
       });
     }
+
+    // Hreflang
+    if (config.extractHreflang) {
+      $('link[rel="alternate"][hreflang]').each((_i, el) => {
+        const lang = $(el).attr('hreflang')?.trim();
+        const href = $(el).attr('href')?.trim();
+        if (lang && href) {
+          try {
+            const resolvedHref = new URL(href, url).toString();
+            hreflangEntries.push({ hreflang: lang, href: resolvedHref });
+          } catch {
+            hreflangEntries.push({ hreflang: lang, href: href });
+          }
+        }
+      });
+    }
+
+    // Content hash (SHA-256 of normalized body text)
+    if (bodyText.length > 0) {
+      contentHash = createHash('sha256').update(bodyText).digest('hex');
+    }
+
+    // Custom CSS extraction
+    if (config.customExtractions && config.customExtractions.length > 0) {
+      for (const rule of config.customExtractions) {
+        try {
+          const matched = $(rule.selector);
+          const value = matched.length > 0 ? matched.first().text().trim() || matched.first().attr('content') || null : null;
+          customExtractionResults.push({ name: rule.name, selector: rule.selector, value });
+        } catch {
+          customExtractionResults.push({ name: rule.name, selector: rule.selector, value: null });
+        }
+      }
+    }
   }
 
   const isIndexable = (() => {
@@ -182,9 +220,10 @@ export async function crawlPageBrightData(
     crawlDepth: depth,
     costUsd,
     createdAt: new Date().toISOString(),
+    contentHash,
   };
 
-  return { page, links, images, discoveredUrls, bytesDownloaded: pageSizeBytes };
+  return { page, links, images, discoveredUrls, redirectChain: [], hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults, bytesDownloaded: pageSizeBytes };
 }
 
 /** Bright Data Web Unlocker CPM pricing: $1 per 1,000 requests */

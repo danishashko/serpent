@@ -1,6 +1,7 @@
 import axios, { AxiosResponse } from 'axios';
 import * as cheerio from 'cheerio';
 import { URL } from 'url';
+import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { BrowserWindow } from 'electron';
 import { PageData, LinkData, ImageData, CrawlConfig } from '../types/index';
@@ -29,6 +30,10 @@ export interface CrawlResult {
   links: LinkData[];
   images: ImageData[];
   discoveredUrls: string[];
+  redirectChain: { url: string; statusCode: number }[];
+  hreflang: { hreflang: string; href: string }[];
+  contentHash: string | null;
+  customExtractions: { name: string; selector: string; value: string | null }[];
 }
 
 // --- JS rendering via hidden Electron BrowserWindow ---
@@ -109,6 +114,7 @@ export async function crawlPageLocal(
   let pageSizeBytes: number | null = null;
 
   let response: AxiosResponse | null = null;
+  const redirectChain: { url: string; statusCode: number }[] = [];
 
   if (config.jsRender) {
     // --- Electron headless renderer ---
@@ -124,19 +130,41 @@ export async function crawlPageLocal(
       statusCode = 0;
     }
   } else {
-    // --- Standard HTTP fetch via axios ---
+    // --- Standard HTTP fetch via axios, with manual redirect following ---
     try {
-      response = await axios.get(url, {
-        timeout: config.timeout || 10000,
-        maxRedirects: config.followRedirects ? 10 : 0,
-        headers: {
-          'User-Agent': 'GhostFrog/1.0 (SEO Crawler; +https://github.com/ghostfrog)',
-          'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-        responseType: 'text',
-        validateStatus: () => true, // Don't throw on 4xx/5xx
-      });
+      let currentUrl = url;
+      const maxHops = config.followRedirects ? 10 : 0;
+
+      for (let hop = 0; hop <= maxHops; hop++) {
+        response = await axios.get(currentUrl, {
+          timeout: config.timeout || 10000,
+          maxRedirects: 0,
+          headers: {
+            'User-Agent': 'GhostFrog/1.0 (SEO Crawler; +https://github.com/ghostfrog)',
+            'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+          responseType: 'text',
+          validateStatus: () => true, // Don't throw on 4xx/5xx
+        });
+
+        const code = response.status;
+        const isRedirect = code >= 300 && code < 400 && response.headers['location'];
+
+        if (isRedirect && hop < maxHops) {
+          const location = response.headers['location'] as string;
+          const nextUrl = new URL(location, currentUrl).toString();
+          redirectChain.push({ url: currentUrl, statusCode: code });
+          currentUrl = nextUrl;
+        } else {
+          // Final response (or non-redirect)
+          if (redirectChain.length > 0) {
+            // Record the last hop arriving at final URL
+            redirectChain.push({ url: currentUrl, statusCode: code });
+          }
+          break;
+        }
+      }
 
       responseTimeMs = Date.now() - startTime;
       statusCode = response!.status;
@@ -172,6 +200,9 @@ export async function crawlPageLocal(
   let canonicalUrl: string | null = null;
   let isCanonicalized = false;
   let robotsMeta: string | null = null;
+  const hreflangEntries: { hreflang: string; href: string }[] = [];
+  let contentHash: string | null = null;
+  const customExtractionResults: { name: string; selector: string; value: string | null }[] = [];
 
   const isHTML = contentType && contentType.includes('text/html');
 
@@ -273,6 +304,41 @@ export async function crawlPageLocal(
         }
       });
     }
+
+    // Hreflang
+    if (config.extractHreflang) {
+      $('link[rel="alternate"][hreflang]').each((_i, el) => {
+        const lang = $(el).attr('hreflang')?.trim();
+        const href = $(el).attr('href')?.trim();
+        if (lang && href) {
+          try {
+            const resolvedHref = new URL(href, url).toString();
+            hreflangEntries.push({ hreflang: lang, href: resolvedHref });
+          } catch {
+            hreflangEntries.push({ hreflang: lang, href: href });
+          }
+        }
+      });
+    }
+
+    // Content hash (SHA-256 of normalized body text for duplicate detection)
+    const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+    if (bodyText.length > 0) {
+      contentHash = createHash('sha256').update(bodyText).digest('hex');
+    }
+
+    // Custom CSS extraction
+    if (config.customExtractions && config.customExtractions.length > 0) {
+      for (const rule of config.customExtractions) {
+        try {
+          const matched = $(rule.selector);
+          const value = matched.length > 0 ? matched.first().text().trim() || matched.first().attr('content') || null : null;
+          customExtractionResults.push({ name: rule.name, selector: rule.selector, value });
+        } catch {
+          customExtractionResults.push({ name: rule.name, selector: rule.selector, value: null });
+        }
+      }
+    }
   }
 
   const page: PageData = {
@@ -298,9 +364,10 @@ export async function crawlPageLocal(
     crawlDepth: depth,
     costUsd: 0, // Local is free
     createdAt: new Date().toISOString(),
+    contentHash,
   };
 
-  return { page, links, images, discoveredUrls };
+  return { page, links, images, discoveredUrls, redirectChain, hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults };
 }
 
 export function detectJsHeavySite(html: string): boolean {

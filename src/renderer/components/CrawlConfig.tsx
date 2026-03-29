@@ -258,6 +258,7 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
             { key: 'extractMeta', label: 'Meta tags / Open Graph' },
             { key: 'extractLinks', label: 'Internal / External links' },
             { key: 'extractImages', label: 'Images' },
+            { key: 'extractHreflang', label: 'Hreflang tags' },
             { key: 'respectRobots', label: 'Respect robots.txt' },
           ].map(({ key, label }) => (
             <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
@@ -298,6 +299,64 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
           </p>
         </div>
       )}
+
+      {/* Custom Extraction Rules */}
+      <div>
+        <label className="label">Custom Extraction Rules</label>
+        <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 0 6px' }}>
+          Extract data from pages using CSS selectors
+        </p>
+        {(config.customExtractions ?? []).map((rule, i) => (
+          <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+            <input
+              className="input"
+              style={{ flex: 1, padding: '3px 6px', fontSize: 11 }}
+              placeholder="Name"
+              value={rule.name}
+              onChange={e => {
+                const rules = [...(config.customExtractions ?? [])];
+                rules[i] = { ...rules[i], name: e.target.value };
+                set('customExtractions', rules);
+              }}
+              disabled={busy}
+            />
+            <input
+              className="input"
+              style={{ flex: 2, padding: '3px 6px', fontSize: 11, fontFamily: 'monospace' }}
+              placeholder="CSS selector (e.g. h2.price)"
+              value={rule.selector}
+              onChange={e => {
+                const rules = [...(config.customExtractions ?? [])];
+                rules[i] = { ...rules[i], selector: e.target.value };
+                set('customExtractions', rules);
+              }}
+              disabled={busy}
+            />
+            <button
+              className="btn-ghost"
+              style={{ padding: '2px 6px', fontSize: 11, color: 'var(--accent-red)' }}
+              onClick={() => {
+                const rules = (config.customExtractions ?? []).filter((_, j) => j !== i);
+                set('customExtractions', rules.length ? rules : undefined);
+              }}
+              disabled={busy}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        <button
+          className="btn-ghost"
+          style={{ fontSize: 11, padding: '3px 10px', marginTop: 2 }}
+          onClick={() => {
+            const rules = [...(config.customExtractions ?? []), { name: '', selector: '' }];
+            set('customExtractions', rules);
+          }}
+          disabled={busy}
+        >
+          + Add Rule
+        </button>
+      </div>
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 6, marginTop: 'auto', paddingTop: 8 }}>
