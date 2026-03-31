@@ -71,7 +71,7 @@ async function refreshAccessToken(): Promise<string> {
   });
 
   if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`);
-  const data = await res.json();
+  const data = await res.json() as { access_token: string; refresh_token?: string; expires_in?: number };
 
   const newTokens: TokenData = {
     access_token: data.access_token,
@@ -138,7 +138,7 @@ export function connectGSC(): Promise<boolean> {
           return;
         }
 
-        const data = await tokenRes.json();
+        const data = await tokenRes.json() as { access_token: string; refresh_token: string; expires_in?: number };
         await saveTokens({
           access_token: data.access_token,
           refresh_token: data.refresh_token,
@@ -183,8 +183,8 @@ export async function getGSCSites(): Promise<string[]> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`GSC API error: ${res.status}`);
-  const data = await res.json();
-  return (data.siteEntry ?? []).map((s: { siteUrl: string }) => s.siteUrl);
+  const data = await res.json() as { siteEntry?: { siteUrl: string }[] };
+  return (data.siteEntry ?? []).map((s) => s.siteUrl);
 }
 
 export async function fetchGSCData(siteUrl: string, days = 28): Promise<GSCData> {
@@ -213,9 +213,9 @@ export async function fetchGSCData(siteUrl: string, days = 28): Promise<GSCData>
   );
 
   if (!res.ok) throw new Error(`GSC query failed: ${res.status}`);
-  const data = await res.json();
+  const data = await res.json() as { rows?: { keys: string[]; clicks: number; impressions: number; ctr: number; position: number }[] };
 
-  const rows: GSCRow[] = (data.rows ?? []).map((r: { keys: string[]; clicks: number; impressions: number; ctr: number; position: number }) => ({
+  const rows: GSCRow[] = (data.rows ?? []).map((r) => ({
     url: r.keys[0],
     clicks: r.clicks,
     impressions: r.impressions,

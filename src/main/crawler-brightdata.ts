@@ -190,12 +190,18 @@ export async function crawlPageBrightData(
         const src = $(el).attr('src')?.trim();
         if (!src) return;
         try {
+          const imgSrc = new URL(src, url).toString();
+          const ext = imgSrc.split('.').pop()?.split('?')[0]?.toLowerCase() ?? '';
           images.push({
             id: uuidv4(),
             crawlId,
             pageUrl: url,
-            imageUrl: new URL(src, url).toString(),
+            imageUrl: imgSrc,
             altText: $(el).attr('alt') ?? null,
+            format: ['jpg','jpeg','png','gif','webp','avif','svg','bmp','ico'].includes(ext) ? ext : null,
+            hasWidth: !!$(el).attr('width'),
+            hasHeight: !!$(el).attr('height'),
+            isLazy: $(el).attr('loading') === 'lazy',
           });
         } catch {
           // skip
@@ -346,6 +352,12 @@ export async function crawlPageBrightData(
     schemaJson,
     schemaErrors,
     hasStructuredData,
+    hasHSTS: false,
+    hasCSP: false,
+    xFrameOptions: null,
+    xContentTypeOptions: null,
+    imageCount: images.length,
+    linkScore: 0,
   };
 
   return { page, links, images, discoveredUrls, redirectChain: [], hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults, bytesDownloaded: pageSizeBytes };
