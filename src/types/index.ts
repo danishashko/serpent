@@ -5,6 +5,7 @@ export type CrawlMode = 'spider' | 'list';
 export type CrawlStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
 export type StorageMode = 'memory' | 'database';
 export type AIProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini';
+export type IssueSeverity = 'critical' | 'warning' | 'info' | 'opportunity';
 
 export interface CrawlConfig {
   startUrl: string;
@@ -65,6 +66,34 @@ export interface PageData {
   costUsd: number;
   createdAt: string;
   contentHash: string | null;
+  h1Length: number | null;
+  h2Length: number | null;
+  h1Count: number;
+  h2Count: number;
+  robotsDirectives: string | null;
+  metaKeywords: string | null;
+  textRatio: number | null;
+  // OG / Twitter Card
+  ogTitle: string | null;
+  ogDescription: string | null;
+  ogImage: string | null;
+  ogType: string | null;
+  twitterCard: string | null;
+  twitterTitle: string | null;
+  twitterDescription: string | null;
+  twitterImage: string | null;
+  // Structured Data
+  schemaTypes: string | null;
+  schemaJson: string | null;
+  schemaErrors: string | null;
+  hasStructuredData: boolean;
+  // Security Headers
+  hasHSTS: boolean;
+  hasCSP: boolean;
+  xFrameOptions: string | null;
+  xContentTypeOptions: string | null;
+  imageCount: number;
+  linkScore: number;
 }
 
 export interface LinkData {
@@ -83,6 +112,10 @@ export interface ImageData {
   pageUrl: string;
   imageUrl: string;
   altText: string | null;
+  format: string | null;
+  hasWidth: boolean;
+  hasHeight: boolean;
+  isLazy: boolean;
 }
 
 export interface RedirectData {
@@ -150,6 +183,16 @@ export interface AIAnalysis {
   createdAt: string;
 }
 
+export interface IssueRecommendation {
+  crawlId: string;
+  issueType: string;
+  severity: IssueSeverity;
+  explanation: string;
+  fixSuggestions: string[];
+  affectedCount: number;
+  createdAt: string;
+}
+
 export interface SerpResultRow {
   id: string;
   crawlId: string;
@@ -202,6 +245,48 @@ export interface UsageStats {
   crawlHistory: { crawlId: string; startUrl: string; cost: number; date: string }[];
 }
 
+export interface CrawlDiffChange {
+  field: string;
+  oldValue: string | number | boolean | null;
+  newValue: string | number | boolean | null;
+}
+
+export interface CrawlDiff {
+  url: string;
+  status: 'added' | 'removed' | 'changed' | 'unchanged';
+  changes: CrawlDiffChange[];
+}
+
+export interface GSCRow {
+  url: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface GSCData {
+  rows: GSCRow[];
+  siteUrl: string;
+  lastFetched: string;
+}
+
+export interface GSCOrphanPage {
+  url: string;
+  clicks: number;
+  impressions: number;
+  position: number;
+  reason: 'not_in_crawl';
+}
+
+export interface GSCOpportunity {
+  url: string;
+  query: string;
+  clicks: number;
+  impressions: number;
+  position: number;
+}
+
 // IPC channel names
 export const IPC = {
   // Crawl control
@@ -236,6 +321,8 @@ export const IPC = {
   AI_ANALYZE: 'ai:analyze',
   AI_ANALYZE_PROGRESS: 'ai:analyze-progress',
   AI_GET_RESULTS: 'ai:get-results',
+  AI_ANALYZE_ISSUES: 'ai:analyze-issues',
+  AI_GET_ISSUE_RECS: 'ai:get-issue-recs',
 
   // Resume
   CRAWL_GET_INCOMPLETE: 'crawl:get-incomplete',
@@ -247,4 +334,14 @@ export const IPC = {
 
   // Usage / Cost
   USAGE_GET_STATS: 'usage:get-stats',
+
+  // Crawl comparison
+  DATA_COMPARE_CRAWLS: 'data:compare-crawls',
+
+  // GSC
+  GSC_CONNECT: 'gsc:connect',
+  GSC_DISCONNECT: 'gsc:disconnect',
+  GSC_GET_SITES: 'gsc:get-sites',
+  GSC_FETCH_DATA: 'gsc:fetch-data',
+  GSC_GET_STATUS: 'gsc:get-status',
 } as const;

@@ -129,6 +129,65 @@ describe('crawlPageLocal', () => {
       expect(page.h1).toBe('Main heading');
       expect(page.h2).toBe('Sub heading');
     });
+
+    it('computes h1/h2 counts and character lengths', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.h1Count).toBe(1);
+      expect(page.h2Count).toBe(1);
+      expect(page.h1Length).toBe('Main heading'.length);
+      expect(page.h2Length).toBe('Sub heading'.length);
+    });
+
+    it('counts multiple h1/h2 tags', async () => {
+      const html = `<html><head><title>Multi</title></head><body>
+        <h1>First</h1><h1>Second</h1>
+        <h2>A</h2><h2>B</h2><h2>C</h2>
+      </body></html>`;
+      mockResponse(html);
+      const { page } = await crawlPageLocal('https://example.com/multi', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.h1Count).toBe(2);
+      expect(page.h2Count).toBe(3);
+      expect(page.h1Length).toBe('First'.length);
+      expect(page.h2Length).toBe('A'.length);
+    });
+  });
+
+  describe('new metadata fields', () => {
+    it('extracts meta keywords', async () => {
+      const html = `<html><head><title>KW</title>
+        <meta name="keywords" content="seo, tools, crawler">
+      </head><body><p>Content</p></body></html>`;
+      mockResponse(html);
+      const { page } = await crawlPageLocal('https://example.com/kw', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.metaKeywords).toBe('seo, tools, crawler');
+    });
+
+    it('returns null metaKeywords when tag is absent', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.metaKeywords).toBeNull();
+    });
+
+    it('extracts robots directives from meta tag', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.robotsDirectives).toBe('index, follow');
+    });
+
+    it('computes text ratio as percentage', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.textRatio).toBeTypeOf('number');
+      expect(page.textRatio).toBeGreaterThan(0);
+      expect(page.textRatio).toBeLessThan(100);
+    });
+
+    it('returns null textRatio for non-HTML', async () => {
+      mockResponse('binary content here', 200, 'application/pdf');
+      const { page } = await crawlPageLocal('https://example.com/file.pdf', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.textRatio).toBeNull();
+    });
   });
 
   describe('indexability', () => {
@@ -353,7 +412,11 @@ describe('crawlPageLocal', () => {
       expect(redirectChain[0]).toEqual({ url: 'https://example.com/old-page', statusCode: 301 });
       expect(redirectChain[1]).toEqual({ url: 'https://example.com/new-page', statusCode: 302 });
       expect(redirectChain[2]).toEqual({ url: 'https://example.com/final-page', statusCode: 200 });
-      expect(page.statusCode).toBe(200);
+      // Redirect pages should show the first redirect status, not the final destination's
+      expect(page.statusCode).toBe(301);
+      // Content should NOT be extracted from the redirected-to page
+      expect(page.title).toBeNull();
+      expect(page.pageSizeBytes).toBe(0);
     });
 
     it('returns empty chain when no redirects occur', async () => {
@@ -592,6 +655,181 @@ describe('crawlPageLocal', () => {
         'https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin
       );
       expect(customExtractions).toHaveLength(0);
+    });
+  });
+
+  // ── Open Graph extraction ──
+
+  describe('Open Graph extraction', () => {
+    const OG_PAGE = `<html><head>
+      <meta property="og:title" content="OG Title">
+      <meta property="og:description" content="OG Description">
+      <meta property="og:image" content="https://example.com/og.jpg">
+      <meta property="og:type" content="article">
+    </head><body>Content</body></html>`;
+
+    it('extracts all OG meta tags', async () => {
+      mockResponse(OG_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.ogTitle).toBe('OG Title');
+      expect(page.ogDescription).toBe('OG Description');
+      expect(page.ogImage).toBe('https://example.com/og.jpg');
+      expect(page.ogType).toBe('article');
+    });
+
+    it('returns null for missing OG tags', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.ogTitle).toBeNull();
+      expect(page.ogDescription).toBeNull();
+      expect(page.ogImage).toBeNull();
+      expect(page.ogType).toBeNull();
+    });
+  });
+
+  // ── Twitter Card extraction ──
+
+  describe('Twitter Card extraction', () => {
+    const TWITTER_PAGE = `<html><head>
+      <meta name="twitter:card" content="summary_large_image">
+      <meta name="twitter:title" content="Twitter Title">
+      <meta name="twitter:description" content="Twitter Desc">
+      <meta name="twitter:image" content="https://example.com/tw.jpg">
+    </head><body>Content</body></html>`;
+
+    it('extracts all Twitter Card meta tags', async () => {
+      mockResponse(TWITTER_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.twitterCard).toBe('summary_large_image');
+      expect(page.twitterTitle).toBe('Twitter Title');
+      expect(page.twitterDescription).toBe('Twitter Desc');
+      expect(page.twitterImage).toBe('https://example.com/tw.jpg');
+    });
+
+    it('returns null for missing Twitter tags', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.twitterCard).toBeNull();
+      expect(page.twitterTitle).toBeNull();
+      expect(page.twitterDescription).toBeNull();
+      expect(page.twitterImage).toBeNull();
+    });
+  });
+
+  // ── Structured Data / JSON-LD extraction ──
+
+  describe('structured data extraction', () => {
+    const JSONLD_PAGE = `<html><head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "Example"
+      }
+      </script>
+    </head><body>Content</body></html>`;
+
+    const MULTI_SCHEMA_PAGE = `<html><head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "name": "Home"
+      }
+      </script>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": []
+      }
+      </script>
+    </head><body>Content</body></html>`;
+
+    it('detects JSON-LD structured data and extracts schema types', async () => {
+      mockResponse(JSONLD_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.hasStructuredData).toBe(true);
+      expect(page.schemaTypes).toBe('Organization');
+      expect(page.schemaJson).not.toBeNull();
+      const blocks = JSON.parse(page.schemaJson!);
+      expect(blocks).toHaveLength(1);
+    });
+
+    it('extracts multiple JSON-LD blocks', async () => {
+      mockResponse(MULTI_SCHEMA_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.hasStructuredData).toBe(true);
+      const blocks = JSON.parse(page.schemaJson!);
+      expect(blocks).toHaveLength(2);
+      expect(page.schemaTypes).toContain('WebPage');
+      expect(page.schemaTypes).toContain('BreadcrumbList');
+    });
+
+    it('returns false hasStructuredData when no schema exists', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.hasStructuredData).toBe(false);
+      expect(page.schemaTypes).toBeNull();
+      expect(page.schemaJson).toBeNull();
+    });
+  });
+
+  // ── Security Headers extraction ──
+
+  describe('security headers extraction', () => {
+    it('detects security headers when present', async () => {
+      axiosMock.mockResolvedValueOnce({
+        status: 200,
+        headers: {
+          'content-type': 'text/html',
+          'strict-transport-security': 'max-age=31536000; includeSubDomains',
+          'content-security-policy': "default-src 'self'",
+          'x-frame-options': 'DENY',
+          'x-content-type-options': 'nosniff',
+        },
+        data: '<html><head><title>Secure</title></head><body>Content</body></html>',
+      } as never);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.hasHSTS).toBe(true);
+      expect(page.hasCSP).toBe(true);
+      expect(page.xFrameOptions).toBe('DENY');
+      expect(page.xContentTypeOptions).toBe('nosniff');
+    });
+
+    it('returns false/null when security headers missing', async () => {
+      mockResponse(SIMPLE_PAGE);
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.hasHSTS).toBe(false);
+      expect(page.hasCSP).toBe(false);
+      expect(page.xFrameOptions).toBeNull();
+      expect(page.xContentTypeOptions).toBeNull();
+    });
+  });
+
+  // ── Image optimization extraction ──
+
+  describe('image optimization extraction', () => {
+    it('extracts image attributes', async () => {
+      mockResponse('<html><head><title>Imgs</title></head><body>' +
+        '<img src="/hero.webp" alt="Hero" width="800" height="600" loading="lazy">' +
+        '<img src="/icon.png" alt="">' +
+        '</body></html>');
+      const { page, images } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.imageCount).toBe(2);
+      expect(images).toHaveLength(2);
+
+      const hero = images.find(i => i.imageUrl.includes('hero.webp'));
+      expect(hero?.format).toBe('webp');
+      expect(hero?.hasWidth).toBe(true);
+      expect(hero?.hasHeight).toBe(true);
+      expect(hero?.isLazy).toBe(true);
+
+      const icon = images.find(i => i.imageUrl.includes('icon.png'));
+      expect(icon?.format).toBe('png');
+      expect(icon?.hasWidth).toBe(false);
+      expect(icon?.hasHeight).toBe(false);
+      expect(icon?.isLazy).toBe(false);
     });
   });
 });

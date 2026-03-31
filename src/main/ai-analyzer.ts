@@ -333,3 +333,49 @@ Identify technical issues and suggest fixes. Respond with this exact JSON struct
     };
   }
 }
+
+// ─── Issue-Group Recommendations ───────────────────────────────────────────────
+
+export interface IssueGroupOutput {
+  explanation: string;
+  fixSuggestions: string[];
+}
+
+export async function analyzeIssueGroup(
+  issueType: string,
+  affectedPages: { url: string; title?: string | null; statusCode?: number | null }[],
+  providerConfig: AIProviderConfig
+): Promise<IssueGroupOutput> {
+  const sampleSize = Math.min(affectedPages.length, 15);
+  const samples = affectedPages.slice(0, sampleSize);
+  const pageList = samples.map((p, i) =>
+    `${i + 1}. ${p.url}${p.title ? ` — title: "${p.title}"` : ''}${p.statusCode ? ` (${p.statusCode})` : ''}`
+  ).join('\n');
+
+  const prompt = `You are an expert SEO auditor. A website crawl found ${affectedPages.length} page(s) with this issue: "${issueType.replace(/_/g, ' ')}".
+
+Here are sample affected pages:
+${pageList}
+
+Respond with valid JSON only using this exact structure:
+{
+  "explanation": "<2-3 sentence explanation of why this issue matters for SEO and user experience>",
+  "fixSuggestions": ["<actionable fix 1>", "<actionable fix 2>", "<actionable fix 3>"]
+}`;
+
+  try {
+    const raw = await generateCompletion(prompt, providerConfig);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found in response');
+    const parsed = JSON.parse(jsonMatch[0]) as IssueGroupOutput;
+    return {
+      explanation: parsed.explanation || 'No explanation provided.',
+      fixSuggestions: Array.isArray(parsed.fixSuggestions) ? parsed.fixSuggestions : [],
+    };
+  } catch {
+    return {
+      explanation: 'Failed to generate AI recommendation for this issue.',
+      fixSuggestions: [],
+    };
+  }
+}

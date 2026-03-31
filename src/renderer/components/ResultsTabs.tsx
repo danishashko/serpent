@@ -1,5 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult } from '../../types/index';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord } from '../../types/index';
+import CrawlComparison from './CrawlComparison';
+import SiteMap from './SiteMap';
 
 interface Props {
   pages: PageData[];
@@ -16,17 +18,47 @@ interface Props {
   serpLoading?: boolean;
 }
 
-type Tab = 'pages' | 'links' | 'images' | 'issues' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp';
+type Tab = 'pages' | 'links' | 'images' | 'issues' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map';
 type IssueFilter =
   | 'all'
   | 'missing_title'
   | 'duplicate_title'
+  | 'long_title'
+  | 'short_title'
   | 'missing_meta'
+  | 'duplicate_meta'
+  | 'long_meta'
+  | 'short_meta'
   | 'missing_h1'
+  | 'duplicate_h1'
+  | 'multiple_h1'
+  | 'h1_over_70'
+  | 'missing_h2'
+  | 'multiple_h2'
+  | 'h2_over_70'
+  | 'same_title_h1'
   | 'broken'
   | 'redirect'
   | 'noindex'
-  | 'thin_content';
+  | 'canonicalized'
+  | 'missing_canonical'
+  | 'thin_content'
+  | 'high_crawl_depth'
+  | 'url_over_115'
+  | 'url_uppercase'
+  | 'url_parameters'
+  | 'url_underscores'
+  | 'url_non_ascii'
+  | 'url_multiple_slashes'
+  | 'url_repetitive_path'
+  | 'no_internal_outlinks'
+  | 'missing_og'
+  | 'missing_twitter_card'
+  | 'missing_schema'
+  | 'missing_hsts'
+  | 'missing_csp'
+  | 'missing_x_frame'
+  | 'missing_x_content_type';
 
 const titleWidthColor = (px: number): string => {
   if (px < 200) return 'var(--text-muted)';
@@ -40,11 +72,87 @@ const metaWidthColor = (px: number): string => {
   return 'var(--accent-red)';
 };
 
+const titleLengthColor = (len: number): string => {
+  if (!len) return 'var(--text-muted)';
+  if (len >= 30 && len <= 60) return 'var(--accent-green)';
+  return 'var(--accent-red)';
+};
+
+const metaLengthColor = (len: number): string => {
+  if (!len) return 'var(--text-muted)';
+  if (len >= 70 && len <= 155) return 'var(--accent-green)';
+  return 'var(--accent-red)';
+};
+
 const statusColor = (code: number): string => {
   if (code === 200) return 'var(--accent-green)';
   if (code >= 300 && code < 400) return 'var(--accent-orange)';
   if (code >= 400) return 'var(--accent-red)';
   return 'var(--text-muted)';
+};
+
+const headingLengthColor = (len: number | null): string => {
+  if (!len) return 'var(--text-muted)';
+  if (len <= 70) return 'var(--accent-green)';
+  return 'var(--accent-red)';
+};
+
+const issueSeverity = (filter: IssueFilter): IssueSeverity => {
+  switch (filter) {
+    case 'broken':
+    case 'noindex':
+    case 'missing_title':
+      return 'critical';
+    case 'duplicate_title':
+    case 'duplicate_meta':
+    case 'missing_meta':
+    case 'missing_h1':
+    case 'multiple_h1':
+    case 'canonicalized':
+    case 'thin_content':
+    case 'missing_canonical':
+    case 'missing_og':
+    case 'missing_twitter_card':
+    case 'missing_schema':
+      return 'warning';
+    case 'long_title':
+    case 'short_title':
+    case 'long_meta':
+    case 'short_meta':
+    case 'h1_over_70':
+    case 'h2_over_70':
+    case 'same_title_h1':
+    case 'high_crawl_depth':
+    case 'missing_h2':
+    case 'multiple_h2':
+    case 'duplicate_h1':
+    case 'redirect':
+    case 'missing_hsts':
+    case 'missing_csp':
+    case 'missing_x_frame':
+    case 'missing_x_content_type':
+      return 'info';
+    case 'url_over_115':
+    case 'url_uppercase':
+    case 'url_parameters':
+    case 'url_underscores':
+    case 'url_non_ascii':
+    case 'url_multiple_slashes':
+    case 'url_repetitive_path':
+    case 'no_internal_outlinks':
+      return 'opportunity';
+    default:
+      return 'info';
+  }
+};
+
+const severityColor = (severity: IssueSeverity): string => {
+  switch (severity) {
+    case 'critical': return '#ef4444';
+    case 'warning': return '#f59e0b';
+    case 'info': return '#3b82f6';
+    case 'opportunity': return '#22c55e';
+  }
 };
 
 export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, crawlId, showToast, onSerpQuery, serpLoading }: Props): React.ReactElement {
@@ -56,6 +164,22 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   const [serpKeywords, setSerpKeywords] = useState('');
   const [serpLocation, setSerpLocation] = useState('United States');
   const [serpDevice, setSerpDevice] = useState<'desktop' | 'mobile'>('desktop');
+  const [issueRecs, setIssueRecs] = useState<Record<string, IssueRecommendation>>({});
+  const [recLoading, setRecLoading] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  const [comparisonDiffs, setComparisonDiffs] = useState<CrawlDiff[]>([]);
+  const [compareCrawls, setCompareCrawls] = useState<CrawlRecord[]>([]);
+  const [showCrawlPicker, setShowCrawlPicker] = useState(false);
+
+  // Load cached AI issue recommendations when crawlId changes
+  useEffect(() => {
+    if (!crawlId) { setIssueRecs({}); return; }
+    window.api.aiGetIssueRecs(crawlId).then((recs: IssueRecommendation[]) => {
+      const m: Record<string, IssueRecommendation> = {};
+      for (const r of recs) m[r.issueType] = r;
+      setIssueRecs(m);
+    }).catch(() => {});
+  }, [crawlId]);
 
   const handleSort = (key: string) => {
     if (sortKey === key) setSortAsc(a => !a);
@@ -68,6 +192,26 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     return m;
   }, [pages]);
 
+  const metaCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    pages.forEach(p => { if (p.metaDescription) m[p.metaDescription] = (m[p.metaDescription] ?? 0) + 1; });
+    return m;
+  }, [pages]);
+
+  const h1Counts = useMemo(() => {
+    const m: Record<string, number> = {};
+    pages.forEach(p => { if (p.h1) m[p.h1] = (m[p.h1] ?? 0) + 1; });
+    return m;
+  }, [pages]);
+
+  const outlinkMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of links) {
+      m.set(l.sourceUrl, (m.get(l.sourceUrl) ?? 0) + 1);
+    }
+    return m;
+  }, [links]);
+
   const filteredPages = useMemo(() => {
     let list = [...pages];
     if (search) {
@@ -79,12 +223,42 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         switch (issueFilter) {
           case 'missing_title': return !p.title;
           case 'duplicate_title': return !!p.title && (titleCounts[p.title] ?? 0) > 1;
+          case 'long_title': return (p.titleLength ?? 0) > 60;
+          case 'short_title': return !!p.title && (p.titleLength ?? 0) < 30;
           case 'missing_meta': return !p.metaDescription;
+          case 'duplicate_meta': return !!p.metaDescription && (metaCounts[p.metaDescription] ?? 0) > 1;
+          case 'long_meta': return (p.metaDescLength ?? 0) > 155;
+          case 'short_meta': return !!p.metaDescription && (p.metaDescLength ?? 0) < 70;
           case 'missing_h1': return !p.h1;
+          case 'duplicate_h1': return !!p.h1 && (h1Counts[p.h1] ?? 0) > 1;
+          case 'multiple_h1': return (p.h1Count ?? 0) > 1;
+          case 'h1_over_70': return (p.h1Length ?? 0) > 70;
+          case 'missing_h2': return !p.h2;
+          case 'multiple_h2': return (p.h2Count ?? 0) > 1;
+          case 'h2_over_70': return (p.h2Length ?? 0) > 70;
+          case 'same_title_h1': return !!p.title && !!p.h1 && p.title.trim() === p.h1.trim();
           case 'broken': return (p.statusCode ?? 0) >= 400;
           case 'redirect': return (p.statusCode ?? 0) >= 300 && (p.statusCode ?? 0) < 400;
           case 'noindex': return !p.isIndexable;
-          case 'thin_content': return (p.wordCount ?? 0) < 300;
+          case 'canonicalized': return p.isCanonicalized;
+          case 'missing_canonical': return !p.canonicalUrl && p.isIndexable;
+          case 'thin_content': return (p.wordCount ?? 0) < 200;
+          case 'high_crawl_depth': return p.crawlDepth > 3;
+          case 'url_over_115': return p.url.length > 115;
+          case 'url_uppercase': return /[A-Z]/.test(p.url.replace(/^https?:\/\/[^/]+/i, ''));
+          case 'url_parameters': return p.url.includes('?');
+          case 'url_underscores': return /_/.test(p.url.replace(/^https?:\/\/[^/]+/i, ''));
+          case 'url_non_ascii': return /[^\x00-\x7F]/.test(p.url);
+          case 'url_multiple_slashes': return /\/\//.test(p.url.replace(/^https?:\/\//, ''));
+          case 'url_repetitive_path': return /(\/.+?)\1/.test(new URL(p.url).pathname);
+          case 'no_internal_outlinks': return (outlinkMap.get(p.url) ?? 0) === 0 && (p.statusCode ?? 0) >= 200 && (p.statusCode ?? 0) < 300;
+          case 'missing_og': return !p.ogTitle && !p.ogDescription && !p.ogImage;
+          case 'missing_twitter_card': return !p.twitterCard;
+          case 'missing_schema': return !p.hasStructuredData;
+          case 'missing_hsts': return !p.hasHSTS;
+          case 'missing_csp': return !p.hasCSP;
+          case 'missing_x_frame': return !p.xFrameOptions;
+          case 'missing_x_content_type': return !p.xContentTypeOptions;
           default: return true;
         }
       });
@@ -96,19 +270,99 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
       return sortAsc ? cmp : -cmp;
     });
     return list;
-  }, [pages, search, issueFilter, tab, titleCounts, sortKey, sortAsc]);
+  }, [pages, search, issueFilter, tab, titleCounts, metaCounts, h1Counts, outlinkMap, sortKey, sortAsc]);
+
+  const handleGetRec = useCallback(async () => {
+    if (!crawlId || issueFilter === 'all' || recLoading) return;
+    setRecLoading(true);
+    try {
+      const affectedPages = filteredPages.slice(0, 50).map(p => ({
+        url: p.url,
+        title: p.title,
+        statusCode: p.statusCode,
+      }));
+      const result = await window.api.aiAnalyzeIssues({
+        crawlId,
+        issueType: issueFilter,
+        severity: issueSeverity(issueFilter),
+        affectedPages,
+      });
+      if (result.success && result.recommendation) {
+        const rec = result.recommendation;
+        setIssueRecs(prev => ({ ...prev, [issueFilter]: rec }));
+        showToast('AI recommendation generated', 'success');
+      } else {
+        showToast(result.error || 'AI analysis failed', 'error');
+      }
+    } catch (err) {
+      showToast(String(err), 'error');
+    } finally {
+      setRecLoading(false);
+    }
+  }, [crawlId, issueFilter, filteredPages, recLoading, showToast]);
+
+  // Build inlinks map: targetUrl → array of source LinkData
+  const inlinkMap = useMemo(() => {
+    const m = new Map<string, LinkData[]>();
+    for (const l of links) {
+      const target = l.targetUrl;
+      const arr = m.get(target);
+      if (arr) arr.push(l);
+      else m.set(target, [l]);
+    }
+    return m;
+  }, [links]);
+
+  const [expandedInlinks, setExpandedInlinks] = useState<string | null>(null);
+  const toggleInlinks = useCallback((url: string) => {
+    setExpandedInlinks(prev => prev === url ? null : url);
+  }, []);
 
   const issueCounts: Record<IssueFilter, number> = useMemo(() => ({
     all: pages.length,
     missing_title: pages.filter(p => !p.title).length,
     duplicate_title: pages.filter(p => !!p.title && (titleCounts[p.title] ?? 0) > 1).length,
+    long_title: pages.filter(p => (p.titleLength ?? 0) > 60).length,
+    short_title: pages.filter(p => !!p.title && (p.titleLength ?? 0) < 30).length,
     missing_meta: pages.filter(p => !p.metaDescription).length,
+    duplicate_meta: pages.filter(p => !!p.metaDescription && (metaCounts[p.metaDescription] ?? 0) > 1).length,
+    long_meta: pages.filter(p => (p.metaDescLength ?? 0) > 155).length,
+    short_meta: pages.filter(p => !!p.metaDescription && (p.metaDescLength ?? 0) < 70).length,
     missing_h1: pages.filter(p => !p.h1).length,
+    duplicate_h1: pages.filter(p => !!p.h1 && (h1Counts[p.h1] ?? 0) > 1).length,
+    multiple_h1: pages.filter(p => (p.h1Count ?? 0) > 1).length,
+    h1_over_70: pages.filter(p => (p.h1Length ?? 0) > 70).length,
+    missing_h2: pages.filter(p => !p.h2).length,
+    multiple_h2: pages.filter(p => (p.h2Count ?? 0) > 1).length,
+    h2_over_70: pages.filter(p => (p.h2Length ?? 0) > 70).length,
+    same_title_h1: pages.filter(p => !!p.title && !!p.h1 && p.title.trim() === p.h1.trim()).length,
     broken: pages.filter(p => (p.statusCode ?? 0) >= 400).length,
     redirect: pages.filter(p => (p.statusCode ?? 0) >= 300 && (p.statusCode ?? 0) < 400).length,
     noindex: pages.filter(p => !p.isIndexable).length,
-    thin_content: pages.filter(p => (p.wordCount ?? 0) < 300).length,
-  }), [pages, titleCounts]);
+    canonicalized: pages.filter(p => p.isCanonicalized).length,
+    missing_canonical: pages.filter(p => !p.canonicalUrl && p.isIndexable).length,
+    thin_content: pages.filter(p => (p.wordCount ?? 0) < 200).length,
+    high_crawl_depth: pages.filter(p => p.crawlDepth > 3).length,
+    url_over_115: pages.filter(p => p.url.length > 115).length,
+    url_uppercase: pages.filter(p => /[A-Z]/.test(p.url.replace(/^https?:\/\/[^/]+/i, ''))).length,
+    url_parameters: pages.filter(p => p.url.includes('?')).length,
+    url_underscores: pages.filter(p => /_/.test(p.url.replace(/^https?:\/\/[^/]+/i, ''))).length,
+    url_non_ascii: pages.filter(p => /[^\x00-\x7F]/.test(p.url)).length,
+    url_multiple_slashes: pages.filter(p => /\/\//.test(p.url.replace(/^https?:\/\//, ''))).length,
+    url_repetitive_path: pages.filter(p => { try { return /(\/.+?)\1/.test(new URL(p.url).pathname); } catch { return false; } }).length,
+    no_internal_outlinks: pages.filter(p => (outlinkMap.get(p.url) ?? 0) === 0 && (p.statusCode ?? 0) >= 200 && (p.statusCode ?? 0) < 300).length,
+    missing_og: pages.filter(p => !p.ogTitle && !p.ogDescription && !p.ogImage).length,
+    missing_twitter_card: pages.filter(p => !p.twitterCard).length,
+    missing_schema: pages.filter(p => !p.hasStructuredData).length,
+    missing_hsts: pages.filter(p => !p.hasHSTS).length,
+    missing_csp: pages.filter(p => !p.hasCSP).length,
+    missing_x_frame: pages.filter(p => !p.xFrameOptions).length,
+    missing_x_content_type: pages.filter(p => !p.xContentTypeOptions).length,
+  }), [pages, titleCounts, metaCounts, h1Counts, outlinkMap]);
+
+  const totalIssueCount = useMemo(() => {
+    return Object.entries(issueCounts).reduce((s, [k, v]) => k === 'all' ? s : s + v, 0);
+  }, [issueCounts]);
 
   const exportCsv = async () => {
     if (!crawlId) return;
@@ -133,10 +387,17 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     if (tab === 'pages' || tab === 'issues') {
       return {
         rows: filteredPages.map(p => ({
-          url: p.url, status_code: p.statusCode ?? '', title: p.title ?? '',
-          title_len_px: p.titlePixelWidth ?? '', meta_description: p.metaDescription ?? '',
-          meta_len_px: p.metaDescPixelWidth ?? '', h1: p.h1 ?? '', canonical: p.canonicalUrl ?? '',
-          indexable: p.isIndexable ? 'true' : 'false', word_count: p.wordCount ?? '', response_ms: p.responseTimeMs ?? '',
+          url: p.url, status_code: p.statusCode ?? '', content_type: p.contentType ?? '',
+          title: p.title ?? '', title_length: p.titleLength ?? '', title_len_px: p.titlePixelWidth ?? '',
+          meta_description: p.metaDescription ?? '', meta_length: p.metaDescLength ?? '',
+          meta_len_px: p.metaDescPixelWidth ?? '', h1: p.h1 ?? '', h1_length: p.h1Length ?? '',
+          h1_count: p.h1Count ?? '', h2: p.h2 ?? '', h2_length: p.h2Length ?? '', h2_count: p.h2Count ?? '',
+          word_count: p.wordCount ?? '', page_size_bytes: p.pageSizeBytes ?? '',
+          crawl_depth: p.crawlDepth, canonical: p.canonicalUrl ?? '',
+          indexable: p.isIndexable ? 'true' : 'false', response_ms: p.responseTimeMs ?? '',
+          inlinks: (inlinkMap.get(p.url) ?? []).length, outlinks: outlinkMap.get(p.url) ?? 0,
+          robots_directives: p.robotsDirectives ?? '', meta_keywords: p.metaKeywords ?? '',
+          text_ratio: p.textRatio ?? '',
         })),
         filename: `${prefix}-pages.${ext}`,
       };
@@ -225,7 +486,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     </th>
   );
 
-  const tabs: Tab[] = ['pages', 'links', 'images', 'issues', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp'];
+  const tabs: Tab[] = ['pages', 'links', 'images', 'issues', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map'];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -255,12 +516,13 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               {t === 'pages' && `Pages (${pages.length})`}
               {t === 'links' && `Links (${links.length})`}
               {t === 'images' && `Images (${images.length})`}
-              {t === 'issues' && `Issues (${issueCounts.broken + issueCounts.missing_title + issueCounts.missing_h1 + issueCounts.noindex})`}
+              {t === 'issues' && `Issues (${totalIssueCount})`}
               {t === 'redirects' && `Redirects (${redirects.length})`}
               {t === 'hreflang' && `Hreflang (${hreflang.length})`}
               {t === 'duplicates' && `Duplicates (${duplicates.length})`}
               {t === 'extractions' && `Extractions (${customExtracts.length})`}
               {t === 'serp' && `SERP (${serpResults.length})`}
+              {t === 'map' && `Map (${pages.length})`}
             </button>
           ))}
         </div>
@@ -274,6 +536,27 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         />
         {crawlId && (
           <div style={{ display: 'flex', gap: 4 }}>
+            <div style={{ position: 'relative' }}>
+              <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} onClick={async () => {
+                const crawls = await window.api.getCrawls();
+                setCompareCrawls(crawls.filter((c: CrawlRecord) => c.id !== crawlId));
+                setShowCrawlPicker(p => !p);
+              }}>⇄ Compare</button>
+              {showCrawlPicker && compareCrawls.length > 0 && (
+                <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 50, background: 'var(--bg-secondary, #1a1d2e)', border: '1px solid var(--border)', borderRadius: 6, padding: 4, minWidth: 250, maxHeight: 200, overflowY: 'auto' }}>
+                  {compareCrawls.map(c => (
+                    <button key={c.id} className="btn-ghost" style={{ display: 'block', width: '100%', textAlign: 'left', fontSize: 11, padding: '4px 8px' }} onClick={async () => {
+                      setShowCrawlPicker(false);
+                      const diffs = await window.api.compareCrawls(crawlId, c.id);
+                      setComparisonDiffs(diffs);
+                      setShowComparison(true);
+                    }}>
+                      {c.startUrl} — {new Date(c.startTime).toLocaleDateString()} ({c.completedUrls} pages)
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} onClick={exportCsv}>
               ↓ CSV
             </button>
@@ -307,10 +590,23 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 color: issueFilter === f ? 'var(--accent-blue)' : 'var(--text-secondary)',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
               }}
             >
+              {f !== 'all' && (
+                <span style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: severityColor(issueSeverity(f)),
+                  display: 'inline-block',
+                  flexShrink: 0,
+                }} />
+              )}
               {f.replace(/_/g, ' ')}
-              <span style={{ marginLeft: 5, color: issueCounts[f] > 0 && f !== 'all' ? 'var(--accent-red)' : 'var(--text-muted)' }}>
+              <span style={{ marginLeft: 3, color: issueCounts[f] > 0 && f !== 'all' ? 'var(--accent-red)' : 'var(--text-muted)' }}>
                 {issueCounts[f]}
               </span>
             </button>
@@ -318,8 +614,68 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         </div>
       )}
 
+      {/* AI issue recommendation card */}
+      {tab === 'issues' && issueFilter !== 'all' && (
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          {issueRecs[issueFilter] ? (
+            <div style={{
+              background: 'rgba(76,133,255,0.06)',
+              border: '1px solid rgba(76,133,255,0.2)',
+              borderRadius: 8,
+              padding: '10px 14px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  🤖 AI Recommendation — {issueFilter.replace(/_/g, ' ')}
+                </span>
+                <button
+                  className="btn-ghost"
+                  style={{ fontSize: 11, padding: '2px 8px' }}
+                  onClick={handleGetRec}
+                  disabled={recLoading}
+                >
+                  {recLoading ? '⏳' : '↻ Refresh'}
+                </button>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 8px 0', lineHeight: 1.5 }}>
+                {issueRecs[issueFilter].explanation}
+              </p>
+              {issueRecs[issueFilter].fixSuggestions.length > 0 && (
+                <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                  {issueRecs[issueFilter].fixSuggestions.map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          ) : (
+            <button
+              className="btn-ghost"
+              style={{
+                fontSize: 12,
+                padding: '6px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+              onClick={handleGetRec}
+              disabled={recLoading || !crawlId}
+            >
+              {recLoading ? '⏳ Analyzing…' : '🤖 Get AI Recommendation'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Crawl comparison overlay */}
+      {showComparison && (
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <CrawlComparison diffs={comparisonDiffs} onClose={() => setShowComparison(false)} />
+        </div>
+      )}
+
       {/* Table area */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      {!showComparison && <div style={{ flex: 1, overflowY: 'auto' }}>
         {(tab === 'pages' || tab === 'issues') && (
           <table className="data-table">
             <thead>
@@ -327,22 +683,36 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <Th label="URL" sortable field="url" />
                 <Th label="Status" sortable field="statusCode" />
                 <Th label="Title" sortable field="title" />
+                <Th label="Title Len" sortable field="titleLength" />
                 <Th label="Title px" sortable field="titlePixelWidth" />
                 <Th label="Meta" sortable field="metaDescription" />
-                <Th label="Meta px" sortable field="metaPixelWidth" />
+                <Th label="Meta Len" sortable field="metaDescLength" />
+                <Th label="Meta px" sortable field="metaDescPixelWidth" />
                 <Th label="H1" sortable field="h1" />
+                <Th label="H1 Len" sortable field="h1Length" />
+                <Th label="H2" sortable field="h2" />
+                <Th label="H2 Len" sortable field="h2Length" />
                 <Th label="Words" sortable field="wordCount" />
-                <Th label="ms" sortable field="responseMs" />
-                <Th label="Noindex" />
+                <Th label="Size" sortable field="pageSizeBytes" />
+                <Th label="Depth" sortable field="crawlDepth" />
+                <Th label="ms" sortable field="responseTimeMs" />
+                <Th label="Link Score" sortable field="linkScore" />
+                <Th label="Inlinks" />
+                <Th label="Outlinks" />
+                <Th label="Indexability" />
               </tr>
             </thead>
             <tbody>
               {filteredPages.length === 0 ? (
-                <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
+                <tr><td colSpan={20} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
                   {pages.length === 0 ? 'Start a crawl to see results' : 'No results match filter'}
                 </td></tr>
-              ) : filteredPages.map(p => (
-                <tr key={p.id}>
+              ) : filteredPages.map(p => {
+                const inlinks = inlinkMap.get(p.url) ?? [];
+                const isExpanded = expandedInlinks === p.url;
+                return (
+                <React.Fragment key={p.id}>
+                <tr>
                   <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <a href={p.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>
                       {p.url}
@@ -356,6 +726,9 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                       <span style={{ color: 'var(--accent-red)', fontSize: 11 }}>MISSING</span>
                     )}
                   </td>
+                  <td style={{ color: titleLengthColor(p.titleLength ?? 0), fontVariantNumeric: 'tabular-nums' }}>
+                    {p.titleLength ?? '—'}
+                  </td>
                   <td style={{ color: titleWidthColor(p.titlePixelWidth ?? 0), fontVariantNumeric: 'tabular-nums' }}>
                     {p.titlePixelWidth ?? '—'}
                   </td>
@@ -366,19 +739,99 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                       <span style={{ color: 'var(--accent-red)', fontSize: 11 }}>MISSING</span>
                     )}
                   </td>
+                  <td style={{ color: metaLengthColor(p.metaDescLength ?? 0), fontVariantNumeric: 'tabular-nums' }}>
+                    {p.metaDescLength ?? '—'}
+                  </td>
                   <td style={{ color: metaWidthColor(p.metaDescPixelWidth ?? 0), fontVariantNumeric: 'tabular-nums' }}>
                     {p.metaDescPixelWidth ?? '—'}
                   </td>
                   <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {p.h1 ?? <span style={{ color: 'var(--accent-red)', fontSize: 11 }}>MISSING</span>}
                   </td>
+                  <td style={{ color: headingLengthColor(p.h1Length ?? null), fontVariantNumeric: 'tabular-nums' }}>
+                    {p.h1Length ?? '—'}
+                  </td>
+                  <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {p.h2 ?? <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
+                  </td>
+                  <td style={{ color: headingLengthColor(p.h2Length ?? null), fontVariantNumeric: 'tabular-nums' }}>
+                    {p.h2Length ?? '—'}
+                  </td>
                   <td style={{ fontVariantNumeric: 'tabular-nums' }}>{p.wordCount ?? '—'}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11 }}>
+                    {p.pageSizeBytes != null ? (p.pageSizeBytes / 1024).toFixed(1) : '—'}
+                  </td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', color: p.crawlDepth > 3 ? 'var(--accent-orange)' : undefined }}>
+                    {p.crawlDepth}
+                  </td>
                   <td style={{ fontVariantNumeric: 'tabular-nums' }}>{p.responseTimeMs ?? '—'}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (p.linkScore ?? 0) >= 50 ? 'var(--accent-green)' : 'var(--text-muted)' }}>{p.linkScore?.toFixed(1) ?? '—'}</td>
                   <td>
-                    {!p.isIndexable && <span style={{ color: 'var(--accent-orange)', fontSize: 10, fontWeight: 600 }}>NOINDEX</span>}
+                    {inlinks.length > 0 ? (
+                      <span
+                        onClick={() => toggleInlinks(p.url)}
+                        style={{
+                          cursor: 'pointer',
+                          color: 'var(--accent-blue)',
+                          fontWeight: 600,
+                          fontSize: 12,
+                          userSelect: 'none',
+                        }}
+                        title="Click to view inlinks"
+                      >
+                        {inlinks.length} {isExpanded ? '▾' : '▸'}
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>0</span>
+                    )}
+                  </td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-muted)' }}>
+                    {outlinkMap.get(p.url) ?? 0}
+                  </td>
+                  <td>
+                    {!p.isIndexable ? (
+                      <span style={{ color: 'var(--accent-orange)', fontSize: 10, fontWeight: 600 }}>
+                        {p.isCanonicalized ? 'CANON' : 'NOINDEX'}
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--accent-green)', fontSize: 10 }}>✓</span>
+                    )}
                   </td>
                 </tr>
-              ))}
+                {isExpanded && inlinks.length > 0 && (
+                  <tr>
+                    <td colSpan={20} style={{ padding: 0, background: 'var(--bg-secondary, rgba(0,0,0,0.05))' }}>
+                      <div style={{ padding: '8px 16px 8px 32px', maxHeight: 200, overflowY: 'auto' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>
+                          Inlinks to {p.url} ({inlinks.length})
+                        </div>
+                        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                              <th style={{ textAlign: 'left', padding: '2px 8px', color: 'var(--text-muted)', fontWeight: 500, fontSize: 11 }}>Source URL</th>
+                              <th style={{ textAlign: 'left', padding: '2px 8px', color: 'var(--text-muted)', fontWeight: 500, fontSize: 11 }}>Anchor Text</th>
+                              <th style={{ textAlign: 'left', padding: '2px 8px', color: 'var(--text-muted)', fontWeight: 500, fontSize: 11 }}>Rel</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {inlinks.map((il, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }}>
+                                <td style={{ padding: '3px 8px', maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  <a href={il.sourceUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{il.sourceUrl}</a>
+                                </td>
+                                <td style={{ padding: '3px 8px', color: 'var(--text-secondary)' }}>{il.anchorText || '(none)'}</td>
+                                <td style={{ padding: '3px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{il.relAttr || ''}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -432,12 +885,16 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               <tr>
                 <th>Image URL</th>
                 <th>Alt Text</th>
+                <th>Format</th>
+                <th>Width Attr</th>
+                <th>Height Attr</th>
+                <th>Lazy Load</th>
                 <th>Source Page</th>
               </tr>
             </thead>
             <tbody>
               {images.length === 0 ? (
-                <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No images collected yet</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No images collected yet</td></tr>
               ) : images.filter(img => !search || img.imageUrl.toLowerCase().includes(search.toLowerCase())).map((img, i) => (
                 <tr key={i}>
                   <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -446,6 +903,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   <td style={{ color: img.altText ? 'var(--text-secondary)' : 'var(--accent-red)', fontSize: img.altText ? 13 : 11 }}>
                     {img.altText || 'MISSING'}
                   </td>
+                  <td>{img.format ?? '—'}</td>
+                  <td>{img.hasWidth ? '✓' : '✗'}</td>
+                  <td>{img.hasHeight ? '✓' : '✗'}</td>
+                  <td>{img.isLazy ? '✓' : '✗'}</td>
                   <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
                     {img.pageUrl}
                   </td>
@@ -581,6 +1042,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
           </table>
         )}
 
+        {tab === 'map' && (
+          <SiteMap pages={pages} />
+        )}
+
         {tab === 'serp' && (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             {/* SERP keyword input */}
@@ -663,7 +1128,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Status bar */}
       <div style={{
@@ -716,6 +1181,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
           <>
             <span>Total: {customExtracts.length}</span>
             <span>Rules: {new Set(customExtracts.map(e => e.ruleName)).size}</span>
+          </>
+        ) : tab === 'map' ? (
+          <>
+            <span>Pages: {pages.length}</span>
           </>
         ) : (
           <>

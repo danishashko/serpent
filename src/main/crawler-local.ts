@@ -13,9 +13,23 @@ function estimatePixelWidth(text: string): number {
   return Math.round(text.length * AVG_CHAR_PX);
 }
 
+function normalizeUrlForComparison(url: string): string {
+  try {
+    const parsed = new URL(url);
+    let path = parsed.pathname;
+    // Strip trailing slash (except root "/")
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    return `${parsed.protocol}//${parsed.host.toLowerCase()}${path}${parsed.search}`;
+  } catch {
+    return url.toLowerCase().replace(/\/+$/, '');
+  }
+}
+
 function isIndexable(statusCode: number | null, canonical: string | null, pageUrl: string, robotsMeta: string | null): boolean {
-  if (!statusCode || statusCode >= 400) return false;
-  if (canonical && canonical !== pageUrl && !canonical.startsWith('/')) return false;
+  if (!statusCode || statusCode < 200 || statusCode >= 300) return false;
+  if (canonical && !canonical.startsWith('/')) {
+    if (normalizeUrlForComparison(canonical) !== normalizeUrlForComparison(pageUrl)) return false;
+  }
   if (robotsMeta && (robotsMeta.includes('noindex') || robotsMeta.includes('none'))) return false;
   return true;
 }
@@ -136,7 +150,7 @@ export async function crawlPageLocal(
       const maxHops = config.followRedirects ? 10 : 0;
 
       for (let hop = 0; hop <= maxHops; hop++) {
-        response = await axios.get(currentUrl, {
+        const resp = await axios.get(currentUrl, {
           timeout: config.timeout || 10000,
           maxRedirects: 0,
           headers: {
@@ -147,12 +161,13 @@ export async function crawlPageLocal(
           responseType: 'text',
           validateStatus: () => true, // Don't throw on 4xx/5xx
         });
+        response = resp;
 
-        const code = response.status;
-        const isRedirect = code >= 300 && code < 400 && response.headers['location'];
+        const code = resp.status;
+        const isRedirect = code >= 300 && code < 400 && resp.headers['location'];
 
         if (isRedirect && hop < maxHops) {
-          const location = response.headers['location'] as string;
+          const location = resp.headers['location'] as string;
           const nextUrl = new URL(location, currentUrl).toString();
           redirectChain.push({ url: currentUrl, statusCode: code });
           currentUrl = nextUrl;
@@ -188,6 +203,24 @@ export async function crawlPageLocal(
   const images: ImageData[] = [];
   const discoveredUrls: string[] = [];
 
+  // If the URL was redirected, record the redirect status code and skip content
+  // parsing — the final destination's HTML belongs to a different URL.
+  // The final URL will be enqueued for its own crawl via discoveredUrls.
+  if (redirectChain.length > 0) {
+    statusCode = redirectChain[0].statusCode;
+    html = '';
+    contentType = null;
+    pageSizeBytes = 0;
+    // Queue the final redirect destination for its own crawl if it's internal
+    const finalUrl = redirectChain[redirectChain.length - 1].url;
+    try {
+      const finalParsed = new URL(finalUrl);
+      if (finalParsed.origin === baseOrigin) {
+        discoveredUrls.push(finalUrl);
+      }
+    } catch { /* skip invalid URLs */ }
+  }
+
   let title: string | null = null;
   let titleLength: number | null = null;
   let titlePixelWidth: number | null = null;
@@ -200,9 +233,35 @@ export async function crawlPageLocal(
   let canonicalUrl: string | null = null;
   let isCanonicalized = false;
   let robotsMeta: string | null = null;
+  let metaKeywords: string | null = null;
+  let h1Count = 0;
+  let h2Count = 0;
+  let h1Length: number | null = null;
+  let h2Length: number | null = null;
+  let textRatio: number | null = null;
   const hreflangEntries: { hreflang: string; href: string }[] = [];
   let contentHash: string | null = null;
   const customExtractionResults: { name: string; selector: string; value: string | null }[] = [];
+  // OG / Twitter Card
+  let ogTitle: string | null = null;
+  let ogDescription: string | null = null;
+  let ogImage: string | null = null;
+  let ogType: string | null = null;
+  let twitterCard: string | null = null;
+  let twitterTitle: string | null = null;
+  let twitterDescription: string | null = null;
+  let twitterImage: string | null = null;
+  // Structured Data
+  let schemaTypes: string | null = null;
+  let schemaJson: string | null = null;
+  let schemaErrors: string | null = null;
+  let hasStructuredData = false;
+
+  // Security headers (available from HTTP response regardless of content type)
+  const hasHSTS = !!response?.headers?.['strict-transport-security'];
+  const hasCSP = !!response?.headers?.['content-security-policy'];
+  const xFrameOptions: string | null = (response?.headers?.['x-frame-options'] as string) ?? null;
+  const xContentTypeOptions: string | null = (response?.headers?.['x-content-type-options'] as string) ?? null;
 
   const isHTML = contentType && contentType.includes('text/html');
 
@@ -226,12 +285,29 @@ export async function crawlPageLocal(
         metaDescPixelWidth = estimatePixelWidth(metaDescription);
       }
       robotsMeta = $('meta[name="robots"]').attr('content')?.toLowerCase() || null;
+      metaKeywords = $('meta[name="keywords"]').attr('content')?.trim() || null;
     }
+
+    // Open Graph meta tags
+    ogTitle = $('meta[property="og:title"]').attr('content')?.trim() || null;
+    ogDescription = $('meta[property="og:description"]').attr('content')?.trim() || null;
+    ogImage = $('meta[property="og:image"]').attr('content')?.trim() || null;
+    ogType = $('meta[property="og:type"]').attr('content')?.trim() || null;
+
+    // Twitter Card meta tags
+    twitterCard = $('meta[name="twitter:card"]').attr('content')?.trim() || null;
+    twitterTitle = $('meta[name="twitter:title"]').attr('content')?.trim() || null;
+    twitterDescription = $('meta[name="twitter:description"]').attr('content')?.trim() || null;
+    twitterImage = $('meta[name="twitter:image"]').attr('content')?.trim() || null;
 
     // Headings
     if (config.extractHeadings) {
       h1 = $('h1').first().text().trim() || null;
       h2 = $('h2').first().text().trim() || null;
+      h1Count = $('h1').length;
+      h2Count = $('h2').length;
+      h1Length = h1 ? h1.length : null;
+      h2Length = h2 ? h2.length : null;
     }
 
     // Canonical
@@ -244,11 +320,13 @@ export async function crawlPageLocal(
         if (match) canonicalUrl = match[1];
       }
       if (!canonicalUrl && canonicalLink) canonicalUrl = canonicalLink;
-      isCanonicalized = !!canonicalUrl && canonicalUrl !== url;
+      isCanonicalized = !!canonicalUrl && normalizeUrlForComparison(canonicalUrl!) !== normalizeUrlForComparison(url);
     }
 
-    // Word count
+    // Word count + text ratio
     wordCount = extractWordCount($);
+    const bodyTextLen = $('body').text().replace(/\s+/g, ' ').trim().length;
+    textRatio = html.length > 0 ? Math.round((bodyTextLen / html.length) * 100 * 10) / 10 : null;
 
     // Links
     if (config.extractLinks) {
@@ -292,12 +370,19 @@ export async function crawlPageLocal(
         if (!src) return;
         try {
           const resolvedSrc = new URL(src, url).toString();
+          const imgSrc = resolvedSrc;
+          const ext = imgSrc.split('.').pop()?.split('?')[0]?.toLowerCase() ?? null;
+          const format = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'avif', 'ico', 'bmp', 'tiff'].includes(ext ?? '') ? ext : null;
           images.push({
             id: uuidv4(),
             crawlId,
             pageUrl: url,
             imageUrl: resolvedSrc,
             altText: $(el).attr('alt') ?? null,
+            format,
+            hasWidth: !!$(el).attr('width'),
+            hasHeight: !!$(el).attr('height'),
+            isLazy: $(el).attr('loading') === 'lazy',
           });
         } catch {
           // Skip invalid image URLs
@@ -325,6 +410,65 @@ export async function crawlPageLocal(
     const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
     if (bodyText.length > 0) {
       contentHash = createHash('sha256').update(bodyText).digest('hex');
+    }
+
+    // Structured Data extraction (JSON-LD + Microdata)
+    {
+      const jsonLdBlocks: unknown[] = [];
+      const schemaTypeSet = new Set<string>();
+      const errors: string[] = [];
+
+      // JSON-LD
+      $('script[type="application/ld+json"]').each((_i, el) => {
+        const raw = $(el).html();
+        if (!raw) return;
+        try {
+          const parsed = JSON.parse(raw);
+          jsonLdBlocks.push(parsed);
+          // Extract @type (can be string or array)
+          const extractTypes = (obj: Record<string, unknown>) => {
+            if (obj['@type']) {
+              const t = obj['@type'];
+              if (Array.isArray(t)) t.forEach((v: string) => schemaTypeSet.add(v));
+              else schemaTypeSet.add(t as string);
+            }
+            // Check @graph array
+            if (Array.isArray(obj['@graph'])) {
+              for (const item of obj['@graph']) {
+                if (item && typeof item === 'object') extractTypes(item as Record<string, unknown>);
+              }
+            }
+          };
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (item && typeof item === 'object') extractTypes(item as Record<string, unknown>);
+            }
+          } else if (parsed && typeof parsed === 'object') {
+            extractTypes(parsed as Record<string, unknown>);
+          }
+        } catch (e) {
+          errors.push(`JSON-LD parse error: ${(e as Error).message}`);
+        }
+      });
+
+      // Microdata
+      $('[itemscope]').each((_i, el) => {
+        const itemtype = $(el).attr('itemtype')?.trim();
+        if (itemtype) {
+          // itemtype is usually a full URL like "https://schema.org/Article"
+          const typeName = itemtype.split('/').pop();
+          if (typeName) schemaTypeSet.add(typeName);
+        }
+      });
+
+      if (schemaTypeSet.size > 0 || jsonLdBlocks.length > 0) {
+        hasStructuredData = true;
+        schemaTypes = schemaTypeSet.size > 0 ? Array.from(schemaTypeSet).join(',') : null;
+        schemaJson = jsonLdBlocks.length > 0 ? JSON.stringify(jsonLdBlocks) : null;
+      }
+      if (errors.length > 0) {
+        schemaErrors = errors.join('; ');
+      }
     }
 
     // Custom CSS extraction
@@ -365,6 +509,31 @@ export async function crawlPageLocal(
     costUsd: 0, // Local is free
     createdAt: new Date().toISOString(),
     contentHash,
+    h1Length,
+    h2Length,
+    h1Count,
+    h2Count,
+    robotsDirectives: robotsMeta,
+    metaKeywords,
+    textRatio,
+    ogTitle,
+    ogDescription,
+    ogImage,
+    ogType,
+    twitterCard,
+    twitterTitle,
+    twitterDescription,
+    twitterImage,
+    schemaTypes,
+    schemaJson,
+    schemaErrors,
+    hasStructuredData,
+    hasHSTS,
+    hasCSP,
+    xFrameOptions,
+    xContentTypeOptions,
+    imageCount: images.length,
+    linkScore: 0,
   };
 
   return { page, links, images, discoveredUrls, redirectChain, hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults };

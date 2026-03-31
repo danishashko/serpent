@@ -56,6 +56,9 @@ contextBridge.exposeInMainWorld('api', {
   // AI
   aiAnalyze: (crawlId: string) => ipcRenderer.invoke(IPC.AI_ANALYZE, crawlId),
   aiGetResults: (pageId: string) => ipcRenderer.invoke(IPC.AI_GET_RESULTS, pageId),
+  aiAnalyzeIssues: (data: { crawlId: string; issueType: string; severity: string; affectedPages: { url: string; title?: string | null; statusCode?: number | null }[] }) =>
+    ipcRenderer.invoke(IPC.AI_ANALYZE_ISSUES, data),
+  aiGetIssueRecs: (crawlId: string) => ipcRenderer.invoke(IPC.AI_GET_ISSUE_RECS, crawlId),
 
   // Resume
   getIncompleteCrawl: () => ipcRenderer.invoke(IPC.CRAWL_GET_INCOMPLETE),
@@ -68,4 +71,14 @@ contextBridge.exposeInMainWorld('api', {
 
   // Usage / Cost
   getUsageStats: () => ipcRenderer.invoke(IPC.USAGE_GET_STATS),
+
+  // Crawl Comparison
+  compareCrawls: (crawlIdA: string, crawlIdB: string) => ipcRenderer.invoke(IPC.DATA_COMPARE_CRAWLS, crawlIdA, crawlIdB),
+
+  // GSC
+  gscConnect: () => ipcRenderer.invoke(IPC.GSC_CONNECT),
+  gscDisconnect: () => ipcRenderer.invoke(IPC.GSC_DISCONNECT),
+  gscGetSites: () => ipcRenderer.invoke(IPC.GSC_GET_SITES),
+  gscFetchData: (siteUrl: string) => ipcRenderer.invoke(IPC.GSC_FETCH_DATA, siteUrl),
+  gscGetStatus: () => ipcRenderer.invoke(IPC.GSC_GET_STATUS),
 });

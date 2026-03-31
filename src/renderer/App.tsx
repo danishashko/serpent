@@ -4,7 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -52,11 +52,19 @@ declare global {
       testAIProvider: (provider: string, config: { ollamaUrl?: string; apiKey?: string }) => Promise<{ success: boolean; models?: string[] }>;
       aiAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
       aiGetResults: (pageId: string) => Promise<unknown[]>;
+      aiAnalyzeIssues: (data: { crawlId: string; issueType: string; severity: string; affectedPages: { url: string; title?: string | null; statusCode?: number | null }[] }) => Promise<{ success: boolean; recommendation?: IssueRecommendation; error?: string }>;
+      aiGetIssueRecs: (crawlId: string) => Promise<IssueRecommendation[]>;
       getIncompleteCrawl: () => Promise<{ id: string; startUrl: string; completedUrls: number; totalUrls: number; status: string } | null>;
       resumeIncompleteCrawl: () => Promise<{ success: boolean; crawlId?: string; error?: string }>;
       serpQuery: (crawlId: string, keywords: string[], location?: string, device?: 'desktop' | 'mobile') => Promise<{ success: boolean; total?: number; totalCost?: number; error?: string }>;
       serpGetResults: (crawlId: string) => Promise<unknown[]>;
       getUsageStats: () => Promise<UsageStats>;
+      compareCrawls: (crawlIdA: string, crawlIdB: string) => Promise<CrawlDiff[]>;
+      gscConnect: () => Promise<boolean>;
+      gscDisconnect: () => Promise<boolean>;
+      gscGetSites: () => Promise<string[]>;
+      gscFetchData: (siteUrl: string) => Promise<GSCData>;
+      gscGetStatus: () => Promise<boolean>;
     };
   }
 }

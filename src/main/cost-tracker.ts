@@ -8,13 +8,11 @@ const COST_PER_REQUEST_USD = 0.001;
 const HARD_STOP_RATIO = 0.95;
 
 export class CostTracker {
-  private crawlId: string;
   private maxCostPerCrawl: number;
   private maxCostPerDay: number;
   private crawlSpend = 0;
 
-  constructor(crawlId: string, maxCostPerCrawl: number, maxCostPerDay: number) {
-    this.crawlId = crawlId;
+  constructor(_crawlId: string, maxCostPerCrawl: number, maxCostPerDay: number) {
     this.maxCostPerCrawl = maxCostPerCrawl;
     this.maxCostPerDay = maxCostPerDay;
   }

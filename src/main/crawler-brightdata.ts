@@ -6,6 +6,17 @@ import { v4 as uuidv4 } from 'uuid';
 import { CrawlConfig, PageData, LinkData, ImageData } from '../types/index';
 import { CrawlResult } from './crawler-local';
 
+function normalizeUrlForComparison(url: string): string {
+  try {
+    const parsed = new URL(url);
+    let path = parsed.pathname;
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    return `${parsed.protocol}//${parsed.host.toLowerCase()}${path}${parsed.search}`;
+  } catch {
+    return url.toLowerCase().replace(/\/+$/, '');
+  }
+}
+
 const BD_ENDPOINT = 'https://api.brightdata.com/request';
 
 export async function crawlPageBrightData(
@@ -73,9 +84,29 @@ export async function crawlPageBrightData(
   let canonicalUrl: string | null = null;
   let isCanonicalized = false;
   let robotsMeta: string | null = null;
+  let metaKeywords: string | null = null;
+  let h1Count = 0;
+  let h2Count = 0;
+  let h1Length: number | null = null;
+  let h2Length: number | null = null;
+  let textRatio: number | null = null;
   const hreflangEntries: { hreflang: string; href: string }[] = [];
   let contentHash: string | null = null;
   const customExtractionResults: { name: string; selector: string; value: string | null }[] = [];
+  // OG / Twitter Card
+  let ogTitle: string | null = null;
+  let ogDescription: string | null = null;
+  let ogImage: string | null = null;
+  let ogType: string | null = null;
+  let twitterCard: string | null = null;
+  let twitterTitle: string | null = null;
+  let twitterDescription: string | null = null;
+  let twitterImage: string | null = null;
+  // Structured Data
+  let schemaTypes: string | null = null;
+  let schemaJson: string | null = null;
+  let schemaErrors: string | null = null;
+  let hasStructuredData = false;
 
   if (html) {
     const $ = cheerio.load(html);
@@ -96,20 +127,38 @@ export async function crawlPageBrightData(
         metaDescPixelWidth = Math.round(metaDescription.length * AVG_CHAR_PX);
       }
       robotsMeta = $('meta[name="robots"]').attr('content')?.toLowerCase() || null;
+      metaKeywords = $('meta[name="keywords"]').attr('content')?.trim() || null;
     }
+
+    // Open Graph meta tags
+    ogTitle = $('meta[property="og:title"]').attr('content')?.trim() || null;
+    ogDescription = $('meta[property="og:description"]').attr('content')?.trim() || null;
+    ogImage = $('meta[property="og:image"]').attr('content')?.trim() || null;
+    ogType = $('meta[property="og:type"]').attr('content')?.trim() || null;
+
+    // Twitter Card meta tags
+    twitterCard = $('meta[name="twitter:card"]').attr('content')?.trim() || null;
+    twitterTitle = $('meta[name="twitter:title"]').attr('content')?.trim() || null;
+    twitterDescription = $('meta[name="twitter:description"]').attr('content')?.trim() || null;
+    twitterImage = $('meta[name="twitter:image"]').attr('content')?.trim() || null;
 
     if (config.extractHeadings) {
       h1 = $('h1').first().text().trim() || null;
       h2 = $('h2').first().text().trim() || null;
+      h1Count = $('h1').length;
+      h2Count = $('h2').length;
+      h1Length = h1 ? h1.length : null;
+      h2Length = h2 ? h2.length : null;
     }
 
     if (config.extractCanonicals) {
       canonicalUrl = $('link[rel="canonical"]').attr('href')?.trim() || null;
-      isCanonicalized = !!canonicalUrl && canonicalUrl !== url;
+      isCanonicalized = !!canonicalUrl && normalizeUrlForComparison(canonicalUrl!) !== normalizeUrlForComparison(url);
     }
 
     const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
     wordCount = bodyText.split(' ').filter(w => w.length > 0).length;
+    textRatio = html.length > 0 ? Math.round((bodyText.length / html.length) * 100 * 10) / 10 : null;
 
     if (config.extractLinks) {
       $('a[href]').each((_i, el) => {
@@ -175,6 +224,60 @@ export async function crawlPageBrightData(
       contentHash = createHash('sha256').update(bodyText).digest('hex');
     }
 
+    // Structured Data extraction (JSON-LD + Microdata)
+    {
+      const jsonLdBlocks: unknown[] = [];
+      const schemaTypeSet = new Set<string>();
+      const errors: string[] = [];
+
+      $('script[type="application/ld+json"]').each((_i, el) => {
+        const raw = $(el).html();
+        if (!raw) return;
+        try {
+          const parsed = JSON.parse(raw);
+          jsonLdBlocks.push(parsed);
+          const extractTypes = (obj: Record<string, unknown>) => {
+            if (obj['@type']) {
+              const t = obj['@type'];
+              if (Array.isArray(t)) t.forEach((v: string) => schemaTypeSet.add(v));
+              else schemaTypeSet.add(t as string);
+            }
+            if (Array.isArray(obj['@graph'])) {
+              for (const item of obj['@graph']) {
+                if (item && typeof item === 'object') extractTypes(item as Record<string, unknown>);
+              }
+            }
+          };
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (item && typeof item === 'object') extractTypes(item as Record<string, unknown>);
+            }
+          } else if (parsed && typeof parsed === 'object') {
+            extractTypes(parsed as Record<string, unknown>);
+          }
+        } catch (e) {
+          errors.push(`JSON-LD parse error: ${(e as Error).message}`);
+        }
+      });
+
+      $('[itemscope]').each((_i, el) => {
+        const itemtype = $(el).attr('itemtype')?.trim();
+        if (itemtype) {
+          const typeName = itemtype.split('/').pop();
+          if (typeName) schemaTypeSet.add(typeName);
+        }
+      });
+
+      if (schemaTypeSet.size > 0 || jsonLdBlocks.length > 0) {
+        hasStructuredData = true;
+        schemaTypes = schemaTypeSet.size > 0 ? Array.from(schemaTypeSet).join(',') : null;
+        schemaJson = jsonLdBlocks.length > 0 ? JSON.stringify(jsonLdBlocks) : null;
+      }
+      if (errors.length > 0) {
+        schemaErrors = errors.join('; ');
+      }
+    }
+
     // Custom CSS extraction
     if (config.customExtractions && config.customExtractions.length > 0) {
       for (const rule of config.customExtractions) {
@@ -190,7 +293,10 @@ export async function crawlPageBrightData(
   }
 
   const isIndexable = (() => {
-    if (!statusCode || statusCode >= 400) return false;
+    if (!statusCode || statusCode < 200 || statusCode >= 300) return false;
+    if (canonicalUrl && !canonicalUrl.startsWith('/')) {
+      if (normalizeUrlForComparison(canonicalUrl) !== normalizeUrlForComparison(url)) return false;
+    }
     if (robotsMeta && (robotsMeta.includes('noindex') || robotsMeta.includes('none'))) return false;
     return true;
   })();
@@ -221,6 +327,25 @@ export async function crawlPageBrightData(
     costUsd,
     createdAt: new Date().toISOString(),
     contentHash,
+    h1Length,
+    h2Length,
+    h1Count,
+    h2Count,
+    robotsDirectives: robotsMeta,
+    metaKeywords,
+    textRatio,
+    ogTitle,
+    ogDescription,
+    ogImage,
+    ogType,
+    twitterCard,
+    twitterTitle,
+    twitterDescription,
+    twitterImage,
+    schemaTypes,
+    schemaJson,
+    schemaErrors,
+    hasStructuredData,
   };
 
   return { page, links, images, discoveredUrls, redirectChain: [], hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults, bytesDownloaded: pageSizeBytes };

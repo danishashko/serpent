@@ -17,7 +17,13 @@
     "test:coverage": "vitest run --coverage",
     "electron-rebuild": "electron-rebuild"
   },
-  "keywords": ["seo", "crawler", "spider", "electron", "screaming-frog-alternative"],
+  "keywords": [
+    "seo",
+    "crawler",
+    "spider",
+    "electron",
+    "screaming-frog-alternative"
+  ],
   "author": "Daniel Shashko <daniel@organikpi.com>",
   "license": "MIT",
   "homepage": "https://github.com/danishashko/ghostfrog",
@@ -51,6 +57,7 @@
     "p-queue": "^7.4.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "recharts": "^3.8.1",
     "uuid": "^11.1.0"
   },
   "build": {

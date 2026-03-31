@@ -1,12 +1,13 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import keytar from 'keytar';
-import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl } from './database';
+import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls } from './database';
 import { CrawlOrchestrator } from './crawler-orchestrator';
 import { testBrightDataConnection } from './crawler-brightdata';
-import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO, testAIProviderConnection, AIProviderConfig } from './ai-analyzer';
+import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO, analyzeIssueGroup, testAIProviderConnection, AIProviderConfig } from './ai-analyzer';
 import { querySerpBatch, storeSerpResults, getSerpResults } from './serp-client';
-import { IPC, CrawlConfig, AppSettings, AIProvider } from '../types/index';
+import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, setGSCCredentials } from './gsc-client';
+import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation } from '../types/index';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
 
@@ -96,6 +97,7 @@ orchestrator.on('error', (err: Error) => {
 });
 
 orchestrator.on('complete', (crawlId: string) => {
+  calculateLinkScores(crawlId);
   mainWindow?.webContents.send(IPC.CRAWL_COMPLETE, crawlId);
 });
 
@@ -347,38 +349,34 @@ ipcMain.handle(IPC.SETTINGS_TEST_AI_PROVIDER, async (_event, provider: AIProvide
 
 // ─── AI IPC Handlers ──────────────────────────────────────────────────────────
 
+async function buildAIProviderConfig(): Promise<{ config: AIProviderConfig } | { error: string }> {
+  const provider = (getConfig('ai_provider') as AIProvider) || 'ollama';
+  switch (provider) {
+    case 'openai': {
+      const key = await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key');
+      if (!key) return { error: 'OpenAI API key not configured. Go to Settings.' };
+      return { config: { provider: 'openai', model: getConfig('openai_model') || 'gpt-4o-mini', apiKey: key } };
+    }
+    case 'anthropic': {
+      const key = await keytar.getPassword(KEYTAR_SERVICE, 'anthropic_api_key');
+      if (!key) return { error: 'Anthropic API key not configured. Go to Settings.' };
+      return { config: { provider: 'anthropic', model: getConfig('anthropic_model') || 'claude-sonnet-4-20250514', apiKey: key } };
+    }
+    case 'gemini': {
+      const key = await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key');
+      if (!key) return { error: 'Gemini API key not configured. Go to Settings.' };
+      return { config: { provider: 'gemini', model: getConfig('gemini_model') || 'gemini-2.0-flash', apiKey: key } };
+    }
+    default:
+      return { config: { provider: 'ollama', model: getConfig('ollama_model') || 'llama3', ollamaUrl: getConfig('ollama_url') || 'http://localhost:11434' } };
+  }
+}
+
 ipcMain.handle(IPC.AI_ANALYZE, async (_event, crawlId: string) => {
   try {
-    const provider = (getConfig('ai_provider') as AIProvider) || 'ollama';
-    let providerConfig: AIProviderConfig;
-
-    switch (provider) {
-      case 'openai': {
-        const key = await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key');
-        if (!key) return { success: false, error: 'OpenAI API key not configured. Go to Settings.' };
-        providerConfig = { provider: 'openai', model: getConfig('openai_model') || 'gpt-4o-mini', apiKey: key };
-        break;
-      }
-      case 'anthropic': {
-        const key = await keytar.getPassword(KEYTAR_SERVICE, 'anthropic_api_key');
-        if (!key) return { success: false, error: 'Anthropic API key not configured. Go to Settings.' };
-        providerConfig = { provider: 'anthropic', model: getConfig('anthropic_model') || 'claude-sonnet-4-20250514', apiKey: key };
-        break;
-      }
-      case 'gemini': {
-        const key = await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key');
-        if (!key) return { success: false, error: 'Gemini API key not configured. Go to Settings.' };
-        providerConfig = { provider: 'gemini', model: getConfig('gemini_model') || 'gemini-2.0-flash', apiKey: key };
-        break;
-      }
-      default: {
-        providerConfig = {
-          provider: 'ollama',
-          model: getConfig('ollama_model') || 'llama3',
-          ollamaUrl: getConfig('ollama_url') || 'http://localhost:11434',
-        };
-      }
-    }
+    const result = await buildAIProviderConfig();
+    if ('error' in result) return { success: false, error: result.error };
+    const providerConfig = result.config;
 
     const pages = getPagesByCrawl(crawlId);
     let analyzed = 0;
@@ -436,6 +434,34 @@ ipcMain.handle(IPC.AI_GET_RESULTS, (_event, pageId: string) => {
   return getAIAnalysisByPage(pageId);
 });
 
+ipcMain.handle(IPC.AI_ANALYZE_ISSUES, async (_event, data: { crawlId: string; issueType: string; severity: string; affectedPages: { url: string; title?: string | null; statusCode?: number | null }[] }) => {
+  try {
+    const result = await buildAIProviderConfig();
+    if ('error' in result) return { success: false, error: result.error };
+
+    const analysis = await analyzeIssueGroup(data.issueType, data.affectedPages, result.config);
+    const now = new Date().toISOString();
+
+    const rec: IssueRecommendation = {
+      crawlId: data.crawlId,
+      issueType: data.issueType,
+      severity: data.severity as IssueRecommendation['severity'],
+      explanation: analysis.explanation,
+      fixSuggestions: analysis.fixSuggestions,
+      affectedCount: data.affectedPages.length,
+      createdAt: now,
+    };
+    upsertIssueRecommendation(rec);
+    return { success: true, recommendation: rec };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.AI_GET_ISSUE_RECS, (_event, crawlId: string) => {
+  return getIssueRecommendationsByCrawl(crawlId);
+});
+
 // ─── SERP IPC Handlers ─────────────────────────────────────────────────────────
 
 ipcMain.handle(IPC.SERP_QUERY, async (_event, data: { crawlId: string; keywords: string[]; location?: string; device?: 'desktop' | 'mobile' }) => {
@@ -462,4 +488,37 @@ ipcMain.handle(IPC.SERP_GET_RESULTS, (_event, crawlId: string) => {
 
 ipcMain.handle(IPC.USAGE_GET_STATS, () => {
   return getUsageStats();
+});
+
+// ─── Crawl Comparison IPC ──────────────────────────────────────────────────────
+
+ipcMain.handle(IPC.DATA_COMPARE_CRAWLS, (_e, crawlIdA: string, crawlIdB: string) => {
+  return compareCrawls(crawlIdA, crawlIdB);
+});
+
+// ─── GSC IPC Handlers ──────────────────────────────────────────────────────────
+
+ipcMain.handle(IPC.GSC_CONNECT, async () => {
+  const id = getConfig('gsc_client_id');
+  const secret = getConfig('gsc_client_secret');
+  if (!id || !secret) throw new Error('Set gsc_client_id and gsc_client_secret in Settings first');
+  setGSCCredentials(id, secret);
+  return connectGSC();
+});
+
+ipcMain.handle(IPC.GSC_DISCONNECT, async () => {
+  await clearGSCTokens();
+  return true;
+});
+
+ipcMain.handle(IPC.GSC_GET_SITES, async () => {
+  return getGSCSites();
+});
+
+ipcMain.handle(IPC.GSC_FETCH_DATA, async (_e, siteUrl: string) => {
+  return fetchGSCData(siteUrl);
+});
+
+ipcMain.handle(IPC.GSC_GET_STATUS, async () => {
+  return isGSCConnected();
 });
