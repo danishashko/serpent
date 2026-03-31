@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, CrawlConfig, AppSettings, AIProvider } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, ReportConfig } from '../types/index';
 
 // Expose a safe, typed API to the renderer process
 contextBridge.exposeInMainWorld('api', {
@@ -81,4 +81,16 @@ contextBridge.exposeInMainWorld('api', {
   gscGetSites: () => ipcRenderer.invoke(IPC.GSC_GET_SITES),
   gscFetchData: (siteUrl: string) => ipcRenderer.invoke(IPC.GSC_FETCH_DATA, siteUrl),
   gscGetStatus: () => ipcRenderer.invoke(IPC.GSC_GET_STATUS),
+
+  // GEO/AEO
+  geoAnalyze: (crawlId: string) => ipcRenderer.invoke(IPC.GEO_ANALYZE, crawlId),
+  geoGetScores: (crawlId: string) => ipcRenderer.invoke(IPC.GEO_GET_SCORES, crawlId),
+
+  // Performance
+  perfAnalyze: (crawlId: string) => ipcRenderer.invoke(IPC.PERF_ANALYZE, crawlId),
+  perfGetScores: (crawlId: string) => ipcRenderer.invoke(IPC.PERF_GET_SCORES, crawlId),
+
+  // Reports
+  reportGeneratePdf: (data: { config: ReportConfig; crawlId: string }) =>
+    ipcRenderer.invoke(IPC.REPORT_GENERATE_PDF, data),
 });

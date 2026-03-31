@@ -287,6 +287,77 @@ export interface GSCOpportunity {
   position: number;
 }
 
+// ── GEO/AEO Readiness Scoring ──
+
+export type GEOCategory = 'entity' | 'answer' | 'citation' | 'schema';
+
+export interface GEOIssue {
+  category: GEOCategory;
+  severity: IssueSeverity;
+  message: string;
+  recommendation: string;
+}
+
+export interface GEOScore {
+  pageId: string;
+  crawlId: string;
+  url: string;
+  overallScore: number;
+  entityClarity: number;
+  answerReadiness: number;
+  citationSignals: number;
+  structuredDataCompleteness: number;
+  issues: GEOIssue[];
+  analyzedAt: string;
+}
+
+// ── Performance / Core Web Vitals ──
+
+export interface PerformanceScore {
+  pageId: string;
+  crawlId: string;
+  url: string;
+  overallScore: number;
+  ttfbScore: number;
+  pageSizeScore: number;
+  imageOptScore: number;
+  contentEfficiency: number;
+  ttfbMs: number;
+  totalBytes: number;
+  imageBytes: number;
+  issues: PerformanceIssue[];
+  analyzedAt: string;
+}
+
+export interface PerformanceIssue {
+  category: 'ttfb' | 'size' | 'images' | 'content';
+  severity: IssueSeverity;
+  message: string;
+  recommendation: string;
+}
+
+// ── PDF Report Export ──
+
+export interface ReportConfig {
+  crawlId: string;
+  title: string;
+  companyName?: string;
+  analystName?: string;
+  sections: ReportSection[];
+  brandColor: string;
+}
+
+export type ReportSection =
+  | 'executive_summary'
+  | 'technical_issues'
+  | 'content_quality'
+  | 'performance'
+  | 'geo_readiness'
+  | 'internal_links'
+  | 'structured_data'
+  | 'security'
+  | 'images';
+
 // IPC channel names
 export const IPC = {
   // Crawl control
@@ -344,4 +415,15 @@ export const IPC = {
   GSC_GET_SITES: 'gsc:get-sites',
   GSC_FETCH_DATA: 'gsc:fetch-data',
   GSC_GET_STATUS: 'gsc:get-status',
+
+  // GEO/AEO
+  GEO_ANALYZE: 'geo:analyze',
+  GEO_GET_SCORES: 'geo:get-scores',
+
+  // Performance
+  PERF_ANALYZE: 'perf:analyze',
+  PERF_GET_SCORES: 'perf:get-scores',
+
+  // Report
+  REPORT_GENERATE_PDF: 'report:generate-pdf',
 } as const;

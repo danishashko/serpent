@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
-import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, IssueRecommendation, UsageLog, CrawlDiff, CrawlDiffChange } from '../types/index';
+import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, IssueRecommendation, UsageLog, CrawlDiff, CrawlDiffChange, GEOScore, PerformanceScore } from '../types/index';
 
 let db: Database.Database;
 
@@ -158,6 +158,39 @@ function createTables(): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_issue_recs_crawl_id ON issue_recommendations(crawl_id);
+
+    CREATE TABLE IF NOT EXISTS geo_scores (
+      page_id TEXT PRIMARY KEY,
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      overall_score REAL NOT NULL DEFAULT 0,
+      entity_clarity REAL NOT NULL DEFAULT 0,
+      answer_readiness REAL NOT NULL DEFAULT 0,
+      citation_signals REAL NOT NULL DEFAULT 0,
+      structured_data_completeness REAL NOT NULL DEFAULT 0,
+      issues_json TEXT,
+      analyzed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_geo_scores_crawl_id ON geo_scores(crawl_id);
+
+    CREATE TABLE IF NOT EXISTS performance_scores (
+      page_id TEXT PRIMARY KEY,
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      overall_score REAL NOT NULL DEFAULT 0,
+      ttfb_score REAL NOT NULL DEFAULT 0,
+      page_size_score REAL NOT NULL DEFAULT 0,
+      image_opt_score REAL NOT NULL DEFAULT 0,
+      content_efficiency REAL NOT NULL DEFAULT 0,
+      ttfb_ms REAL NOT NULL DEFAULT 0,
+      total_bytes INTEGER NOT NULL DEFAULT 0,
+      image_bytes INTEGER NOT NULL DEFAULT 0,
+      issues_json TEXT,
+      analyzed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_perf_scores_crawl_id ON performance_scores(crawl_id);
   `);
 
   // Add content_hash column if it doesn't exist (migration for existing DBs)
@@ -688,6 +721,109 @@ export function compareCrawls(crawlIdA: string, crawlIdB: string): CrawlDiff[] {
     }
   }
   return diffs;
+}
+
+export function upsertGEOScore(score: GEOScore): void {
+  if (!db) throw new Error('Database not initialised');
+  db.prepare(`
+    INSERT INTO geo_scores (page_id, crawl_id, url, overall_score, entity_clarity, answer_readiness, citation_signals, structured_data_completeness, issues_json, analyzed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(page_id) DO UPDATE SET
+      overall_score = excluded.overall_score,
+      entity_clarity = excluded.entity_clarity,
+      answer_readiness = excluded.answer_readiness,
+      citation_signals = excluded.citation_signals,
+      structured_data_completeness = excluded.structured_data_completeness,
+      issues_json = excluded.issues_json,
+      analyzed_at = excluded.analyzed_at
+  `).run(
+    score.pageId, score.crawlId, score.url,
+    score.overallScore, score.entityClarity, score.answerReadiness,
+    score.citationSignals, score.structuredDataCompleteness,
+    JSON.stringify(score.issues), score.analyzedAt
+  );
+}
+
+export function upsertGEOScoresBatch(scores: GEOScore[]): void {
+  if (!db) throw new Error('Database not initialised');
+  const insertMany = db.transaction((rows: GEOScore[]) => {
+    for (const score of rows) {
+      upsertGEOScore(score);
+    }
+  });
+  insertMany(scores);
+}
+
+export function getGEOScoresByCrawl(crawlId: string): GEOScore[] {
+  if (!db) throw new Error('Database not initialised');
+  const rows = db.prepare('SELECT * FROM geo_scores WHERE crawl_id = ?').all(crawlId) as Record<string, unknown>[];
+  return rows.map(r => ({
+    pageId: r.page_id as string,
+    crawlId: r.crawl_id as string,
+    url: r.url as string,
+    overallScore: r.overall_score as number,
+    entityClarity: r.entity_clarity as number,
+    answerReadiness: r.answer_readiness as number,
+    citationSignals: r.citation_signals as number,
+    structuredDataCompleteness: r.structured_data_completeness as number,
+    issues: JSON.parse((r.issues_json as string) || '[]'),
+    analyzedAt: r.analyzed_at as string,
+  }));
+}
+
+export function upsertPerformanceScore(score: PerformanceScore): void {
+  if (!db) throw new Error('Database not initialised');
+  db.prepare(`
+    INSERT INTO performance_scores (page_id, crawl_id, url, overall_score, ttfb_score, page_size_score, image_opt_score, content_efficiency, ttfb_ms, total_bytes, image_bytes, issues_json, analyzed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(page_id) DO UPDATE SET
+      overall_score = excluded.overall_score,
+      ttfb_score = excluded.ttfb_score,
+      page_size_score = excluded.page_size_score,
+      image_opt_score = excluded.image_opt_score,
+      content_efficiency = excluded.content_efficiency,
+      ttfb_ms = excluded.ttfb_ms,
+      total_bytes = excluded.total_bytes,
+      image_bytes = excluded.image_bytes,
+      issues_json = excluded.issues_json,
+      analyzed_at = excluded.analyzed_at
+  `).run(
+    score.pageId, score.crawlId, score.url,
+    score.overallScore, score.ttfbScore, score.pageSizeScore,
+    score.imageOptScore, score.contentEfficiency,
+    score.ttfbMs, score.totalBytes, score.imageBytes,
+    JSON.stringify(score.issues), score.analyzedAt
+  );
+}
+
+export function upsertPerformanceScoresBatch(scores: PerformanceScore[]): void {
+  if (!db) throw new Error('Database not initialised');
+  const insertMany = db.transaction((rows: PerformanceScore[]) => {
+    for (const score of rows) {
+      upsertPerformanceScore(score);
+    }
+  });
+  insertMany(scores);
+}
+
+export function getPerformanceScoresByCrawl(crawlId: string): PerformanceScore[] {
+  if (!db) throw new Error('Database not initialised');
+  const rows = db.prepare('SELECT * FROM performance_scores WHERE crawl_id = ?').all(crawlId) as Record<string, unknown>[];
+  return rows.map(r => ({
+    pageId: r.page_id as string,
+    crawlId: r.crawl_id as string,
+    url: r.url as string,
+    overallScore: r.overall_score as number,
+    ttfbScore: r.ttfb_score as number,
+    pageSizeScore: r.page_size_score as number,
+    imageOptScore: r.image_opt_score as number,
+    contentEfficiency: r.content_efficiency as number,
+    ttfbMs: r.ttfb_ms as number,
+    totalBytes: r.total_bytes as number,
+    imageBytes: r.image_bytes as number,
+    issues: JSON.parse((r.issues_json as string) || '[]'),
+    analyzedAt: r.analyzed_at as string,
+  }));
 }
 
 export function closeDatabase(): void {

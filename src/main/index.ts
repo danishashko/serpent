@@ -1,13 +1,16 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import keytar from 'keytar';
-import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls } from './database';
+import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl } from './database';
+import { analyzeGEOBatch } from './geo-analyzer';
+import { analyzePerformanceBatch } from './performance-analyzer';
+import { generatePdfReport } from './report-generator';
 import { CrawlOrchestrator } from './crawler-orchestrator';
 import { testBrightDataConnection } from './crawler-brightdata';
 import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO, analyzeIssueGroup, testAIProviderConnection, AIProviderConfig } from './ai-analyzer';
 import { querySerpBatch, storeSerpResults, getSerpResults } from './serp-client';
 import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, setGSCCredentials } from './gsc-client';
-import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig } from '../types/index';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
 
@@ -521,4 +524,56 @@ ipcMain.handle(IPC.GSC_FETCH_DATA, async (_e, siteUrl: string) => {
 
 ipcMain.handle(IPC.GSC_GET_STATUS, async () => {
   return isGSCConnected();
+});
+
+// ─── GEO/AEO IPC Handlers ──────────────────────────────────────────────────────
+
+ipcMain.handle(IPC.GEO_ANALYZE, async (_event, crawlId: string) => {
+  try {
+    const pages = getPagesByCrawl(crawlId);
+    const links = getLinksByCrawl(crawlId);
+    const images = getImagesByCrawl(crawlId);
+    const scores = analyzeGEOBatch(pages, links, images);
+    upsertGEOScoresBatch(scores);
+    return { success: true, total: scores.length };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.GEO_GET_SCORES, (_event, crawlId: string) => {
+  return getGEOScoresByCrawl(crawlId);
+});
+
+// ─── Performance IPC Handlers ───────────────────────────────────────────────────
+
+ipcMain.handle(IPC.PERF_ANALYZE, async (_event, crawlId: string) => {
+  try {
+    const pages = getPagesByCrawl(crawlId);
+    const images = getImagesByCrawl(crawlId);
+    const scores = analyzePerformanceBatch(pages, images);
+    upsertPerformanceScoresBatch(scores);
+    return { success: true, total: scores.length };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.PERF_GET_SCORES, (_event, crawlId: string) => {
+  return getPerformanceScoresByCrawl(crawlId);
+});
+
+// ─── Report IPC Handlers ────────────────────────────────────────────────────────
+
+ipcMain.handle(IPC.REPORT_GENERATE_PDF, async (_event, data: { config: ReportConfig; crawlId: string }) => {
+  try {
+    const pages = getPagesByCrawl(data.crawlId);
+    const links = getLinksByCrawl(data.crawlId);
+    const images = getImagesByCrawl(data.crawlId);
+    const geoScores = getGEOScoresByCrawl(data.crawlId);
+    const perfScores = getPerformanceScoresByCrawl(data.crawlId);
+    return generatePdfReport({ config: data.config, pages, links, images, geoScores, perfScores });
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
 });

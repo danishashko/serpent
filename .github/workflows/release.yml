@@ -1,0 +1,74 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npx vitest run
+
+      - name: Build app
+        run: npm run build
+
+      - name: Build installer (unsigned)
+        run: npx electron-builder --win --config.win.signAndEditExecutable=false
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ──────────────────────────────────────────────
+      # SignPath Code Signing (enable after approval)
+      # ──────────────────────────────────────────────
+      # 1. Apply at https://signpath.io/apply
+      # 2. Add SIGNPATH_API_TOKEN to GitHub Secrets
+      # 3. Replace the org-id / project-slug / signing-policy-slug
+      # 4. Uncomment the two steps below
+      #
+      # - name: Upload unsigned artifact
+      #   id: upload-unsigned
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ghostfrog-unsigned
+      #     path: release/*.exe
+      #
+      # - name: Submit signing request
+      #   uses: signpath/github-action-submit-signing-request@v2
+      #   with:
+      #     api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+      #     organization-id: '<your-signpath-org-id>'
+      #     project-slug: 'ghostfrog'
+      #     signing-policy-slug: 'release-signing'
+      #     github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
+      #     wait-for-completion: true
+      #     output-artifact-directory: release/signed
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/latest.yml
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

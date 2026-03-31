@@ -74,7 +74,14 @@
     "win": {
       "target": "nsis",
       "icon": "resources/icon.ico",
-      "publisherName": "Daniel Shashko"
+      "signtoolOptions": {
+        "publisherName": "Daniel Shashko"
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "license": "LICENSE"
     },
     "mac": {
       "target": "dmg",

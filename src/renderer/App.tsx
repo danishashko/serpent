@@ -4,7 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -65,6 +65,11 @@ declare global {
       gscGetSites: () => Promise<string[]>;
       gscFetchData: (siteUrl: string) => Promise<GSCData>;
       gscGetStatus: () => Promise<boolean>;
+      geoAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
+      geoGetScores: (crawlId: string) => Promise<GEOScore[]>;
+      perfAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
+      perfGetScores: (crawlId: string) => Promise<PerformanceScore[]>;
+      reportGeneratePdf: (data: { config: ReportConfig; crawlId: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
     };
   }
 }
@@ -86,6 +91,8 @@ export default function App(): React.ReactElement {
   const [hreflang, setHreflang] = useState<HreflangData[]>([]);
   const [duplicates, setDuplicates] = useState<{ contentHash: string; urls: string[] }[]>([]);
   const [customExtracts, setCustomExtracts] = useState<CustomExtractionResult[]>([]);
+  const [geoScores, setGeoScores] = useState<GEOScore[]>([]);
+  const [perfScores, setPerfScores] = useState<PerformanceScore[]>([]);
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = toastCounter + 1;
@@ -115,6 +122,9 @@ export default function App(): React.ReactElement {
     window.api.serpGetResults(crawlId).then(results => {
       setSerpResults(results as SerpResultRow[]);
     }).catch(() => {});
+    // Load GEO + Performance scores (non-blocking)
+    window.api.geoGetScores(crawlId).then(setGeoScores).catch(() => {});
+    window.api.perfGetScores(crawlId).then(setPerfScores).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -184,6 +194,8 @@ export default function App(): React.ReactElement {
     setHreflang([]);
     setDuplicates([]);
     setCustomExtracts([]);
+    setGeoScores([]);
+    setPerfScores([]);
   };
 
   const handleSerpQuery = async (keywords: string[], location?: string, device?: 'desktop' | 'mobile') => {
@@ -318,10 +330,14 @@ export default function App(): React.ReactElement {
                   hreflang={hreflang}
                   duplicates={duplicates}
                   customExtracts={customExtracts}
+                  geoScores={geoScores}
+                  perfScores={perfScores}
                   crawlId={activeCrawlId}
                   showToast={showToast}
                   onSerpQuery={handleSerpQuery}
                   serpLoading={serpLoading}
+                  onGeoScoresUpdate={setGeoScores}
+                  onPerfScoresUpdate={setPerfScores}
                 />
               ) : (
                 <AIInsights

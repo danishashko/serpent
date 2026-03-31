@@ -18,7 +18,8 @@ GhostFrog is an Electron-based SEO crawling tool that brings enterprise-grade si
 - **JavaScript rendering** via Electron's built-in Chromium (no headless browser needed)
 - **robots.txt** parsing and enforcement
 - **Subdomain restriction** and crawl scoping (domain, subdomain, or URL list mode)
-- **Pause / Resume / Stop** with persistent crawl state
+- **Pause / Resume / Stop** with persistent crawl state and cost continuity
+- **Crawl comparison** — diff any two crawls to see new, removed, and changed pages
 
 ### SEO Extraction
 - Title tags (with pixel-width estimation)
@@ -27,12 +28,15 @@ GhostFrog is an Electron-based SEO crawling tool that brings enterprise-grade si
 - Canonical URLs and canonicalization detection
 - Indexability analysis (noindex, canonical, status codes)
 - Internal and external link mapping with anchor text and rel attributes
-- Image inventory with alt text auditing
-- Word count and page size
+- Image inventory with alt text, dimensions, format, and lazy-load detection
+- Word count, page size, and text-to-HTML ratio
 - **Redirect chain detection** — captures every hop with status codes
 - **Duplicate content detection** — SHA-256 content hashing to surface identical pages
 - **Hreflang validation** — extracts and validates hreflang/x-default tags across pages
 - **Custom extraction** — apply your own CSS selectors to pull any data from pages
+- **Structured data / JSON-LD** — extracts Schema.org types, validates JSON-LD, and reports errors
+- **Open Graph & Twitter Cards** — extracts og:title, og:description, og:image, twitter:card, and more
+- **Security headers** — checks HSTS, CSP, X-Frame-Options, and X-Content-Type-Options
 
 ### AI Analysis
 - **Multi-LLM support** — bring your own key for any provider:
@@ -41,17 +45,32 @@ GhostFrog is an Electron-based SEO crawling tool that brings enterprise-grade si
   - Google Gemini (Gemini Pro, Gemini Flash)
   - Ollama (local models — Llama 3, Mistral, etc.)
 - Per-page SEO analysis with actionable recommendations
+- **AI issue recommendations** — grouped analysis of issues with plain-English explanations and fix suggestions
+- **Auto-generated fixes** — AI-generated optimized titles and meta descriptions for pages with issues
 - Usage tracking with cost estimation
+
+### Issue Intelligence
+- **Severity scoring** — every issue classified as Critical / Warning / Info / Opportunity
+- **Prioritized issue list** — sorted by impact, color-coded by severity
+- **Image optimization analysis** — detects missing dimensions, unoptimized formats, and missing lazy-load
+- **Internal link equity score** — PageRank-style algorithm to identify your most important pages
+
+### Google Search Console Integration
+- **OAuth 2.0 authentication** — connect your GSC account directly
+- **Search analytics** — import clicks, impressions, CTR, and average position per page
+- **Orphan page detection** — find pages in GSC that your crawl didn't discover
 
 ### SERP Analysis
 - Google SERP scraping via Bright Data
 - Competitor comparison for target keywords
 
-### Data & Export
+### Visualization & Reporting
+- **Site treemap** — visual map of your site sized by link equity, color-coded by issue severity
+- **Crawl comparison** — side-by-side diff showing new, removed, and changed pages between crawls
+- **Cost monitor** — real-time Bright Data spend tracking with daily history chart and hard-stop limits
 - SQLite local storage (zero cloud dependency)
 - CSV and JSON export
-- Sortable, filterable data tables
-- Issue detection with severity filtering
+- Sortable, filterable data tables with 9 dedicated tabs
 
 ---
 
@@ -117,19 +136,23 @@ For crawling bot-protected sites:
 
 ```
 URL Input → Crawl Engine → Data Extraction → SQLite Storage → AI Analysis → Export
-              ↓                    ↓
-         Local (axios)      Redirect chains
-              or             Hreflang tags
-         Bright Data        Content hashes
+              ↓                    ↓                  ↓               ↓
+         Local (axios)      Redirect chains      Link Equity    Issue Recs
+              or             Hreflang tags        PageRank       Auto-Fixes
+         Bright Data        Content hashes        GSC Merge      Severity
+                            Schema/JSON-LD        Comparison
+                            OG/Twitter Cards      Treemap
+                            Security Headers
                             Custom selectors
                             Links & images
 ```
 
 1. **Configure** your crawl (URL, depth, concurrency, extraction options)
-2. **Crawl** using local engine or Bright Data
-3. **Review** extracted data across multiple tabs (Pages, Links, Images, Redirects, Hreflang, Issues)
-4. **Analyze** pages with your AI provider of choice
-5. **Export** results as CSV or JSON
+2. **Crawl** using local engine or Bright Data (pause/resume supported)
+3. **Review** extracted data across 9 tabs (Pages, Links, Images, Issues, Redirects, Hreflang, Duplicates, Extractions, SERP)
+4. **Analyze** pages with your AI provider — get severity-scored issues with fix suggestions
+5. **Visualize** your site as a treemap, compare crawls, connect GSC for orphan page detection
+6. **Export** results as CSV or JSON
 
 ---
 
@@ -139,12 +162,23 @@ URL Input → Crawl Engine → Data Extraction → SQLite Storage → AI Analysi
 |---------|-----------|----------------|
 | Price | **Free / Open Source** | £199/yr |
 | AI Analysis | ✅ Multi-LLM (4 providers) | ❌ |
+| AI Issue Recommendations | ✅ Auto-generated fixes | ❌ |
+| Issue Severity Scoring | ✅ Critical/Warning/Info/Opportunity | ✅ |
+| Structured Data / JSON-LD | ✅ Extraction + validation | ✅ |
+| Open Graph / Twitter Cards | ✅ Full extraction | ✅ |
+| Security Headers | ✅ HSTS, CSP, X-Frame, X-Content-Type | ❌ |
+| Google Search Console | ✅ OAuth + orphan page detection | ✅ (paid) |
+| Site Visualization | ✅ Treemap with issue heat map | ❌ |
+| Crawl Comparison | ✅ Side-by-side diff | ✅ |
+| Link Equity / PageRank | ✅ Built-in scoring | ❌ |
 | Redirect Chains | ✅ | ✅ |
 | Hreflang Validation | ✅ | ✅ |
 | Custom Extraction | ✅ CSS selectors | ✅ CSS/XPath/Regex |
 | Duplicate Detection | ✅ Content hashing | ✅ Near-duplicate |
 | JS Rendering | ✅ Chromium built-in | ✅ (Chrome required) |
 | Bot Protection Bypass | ✅ Bright Data | ❌ |
+| SERP Analysis | ✅ Bright Data | ❌ |
+| Cost Monitoring | ✅ Real-time spend tracking | N/A |
 | URL Limit (free) | **Unlimited** | 500 |
 | Open Source | ✅ MIT | ❌ |
 | Cross-Platform | ✅ Win/Mac/Linux | ✅ Win/Mac/Linux |
@@ -172,25 +206,36 @@ URL Input → Crawl Engine → Data Extraction → SQLite Storage → AI Analysi
 ```
 ghostfrog/
 ├── src/
-│   ├── main/              # Electron main process
-│   │   ├── index.ts       # Window creation, IPC handlers
-│   │   ├── database.ts    # SQLite schema and queries
-│   │   ├── crawler-local.ts       # Local HTTP crawler
-│   │   ├── crawler-brightdata.ts  # Bright Data crawler
-│   │   └── crawler-orchestrator.ts # Crawl queue management
+│   ├── main/                        # Electron main process
+│   │   ├── index.ts                 # Window creation, IPC handlers
+│   │   ├── database.ts              # SQLite schema, queries, link scoring, crawl comparison
+│   │   ├── crawler-local.ts         # Local HTTP crawler + JS rendering
+│   │   ├── crawler-brightdata.ts    # Bright Data crawler
+│   │   ├── crawler-orchestrator.ts  # Crawl queue management
+│   │   ├── ai-analyzer.ts           # Multi-LLM analysis + issue recommendations
+│   │   ├── gsc-client.ts            # Google Search Console OAuth + analytics
+│   │   ├── serp-client.ts           # SERP ranking via Bright Data
+│   │   └── cost-tracker.ts          # Bright Data spend monitoring
 │   ├── preload/
-│   │   └── index.ts       # IPC bridge (contextBridge)
+│   │   └── index.ts                 # IPC bridge (contextBridge)
 │   ├── renderer/
-│   │   ├── App.tsx         # Main React app
+│   │   ├── App.tsx                  # Main React app
 │   │   └── components/
-│   │       ├── CrawlConfig.tsx   # Crawl settings sidebar
-│   │       └── ResultsTabs.tsx   # Data display tabs
+│   │       ├── CrawlConfig.tsx      # Crawl settings sidebar
+│   │       ├── ResultsTabs.tsx      # 9-tab data display
+│   │       ├── SiteMap.tsx          # Treemap visualization
+│   │       ├── CrawlComparison.tsx  # Crawl diff viewer
+│   │       ├── CostMonitor.tsx      # Spend tracking dashboard
+│   │       ├── AIInsights.tsx       # AI analysis panel
+│   │       └── Settings.tsx         # Provider configuration
+│   ├── test/                        # Vitest test suites
 │   └── types/
-│       └── index.ts        # Shared TypeScript types
+│       └── index.ts                 # Shared TypeScript types (44-column PageData)
 ├── package.json
 ├── vite.config.ts
 ├── vitest.config.ts
-└── electron-builder.yml
+├── PRIVACY_POLICY.md
+└── CODE_SIGNING.md
 ```
 
 ---
@@ -210,6 +255,10 @@ Contributions welcome! Please open an issue first to discuss what you'd like to 
 ## License
 
 [MIT](LICENSE) © 2026 [Daniel Shashko](https://organikpi.com)
+
+## Privacy
+
+[Privacy Policy](PRIVACY_POLICY.md) — GhostFrog collects zero user data. All processing is local.
 
 ---
 

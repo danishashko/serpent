@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord } from '../../types/index';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig } from '../../types/index';
 import CrawlComparison from './CrawlComparison';
 import SiteMap from './SiteMap';
 
@@ -12,13 +12,17 @@ interface Props {
   hreflang: HreflangData[];
   duplicates: { contentHash: string; urls: string[] }[];
   customExtracts: CustomExtractionResult[];
+  geoScores: GEOScore[];
+  perfScores: PerformanceScore[];
   crawlId: string | null;
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
   onSerpQuery?: (keywords: string[], location?: string, device?: 'desktop' | 'mobile') => void;
   serpLoading?: boolean;
+  onGeoScoresUpdate?: (scores: GEOScore[]) => void;
+  onPerfScoresUpdate?: (scores: PerformanceScore[]) => void;
 }
 
-type Tab = 'pages' | 'links' | 'images' | 'issues' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map';
+type Tab = 'pages' | 'links' | 'images' | 'issues' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map' | 'geo' | 'perf';
 type IssueFilter =
   | 'all'
   | 'missing_title'
@@ -155,7 +159,7 @@ const severityColor = (severity: IssueSeverity): string => {
   }
 };
 
-export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, crawlId, showToast, onSerpQuery, serpLoading }: Props): React.ReactElement {
+export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, geoScores, perfScores, crawlId, showToast, onSerpQuery, serpLoading, onGeoScoresUpdate, onPerfScoresUpdate }: Props): React.ReactElement {
   const [tab, setTab] = useState<Tab>('pages');
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
   const [search, setSearch] = useState('');
@@ -170,6 +174,11 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   const [comparisonDiffs, setComparisonDiffs] = useState<CrawlDiff[]>([]);
   const [compareCrawls, setCompareCrawls] = useState<CrawlRecord[]>([]);
   const [showCrawlPicker, setShowCrawlPicker] = useState(false);
+  const [geoAnalyzing, setGeoAnalyzing] = useState(false);
+  const [perfAnalyzing, setPerfAnalyzing] = useState(false);
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const reportTitle = 'SEO Audit Report';
+  const reportCompany = '';
 
   // Load cached AI issue recommendations when crawlId changes
   useEffect(() => {
@@ -486,7 +495,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     </th>
   );
 
-  const tabs: Tab[] = ['pages', 'links', 'images', 'issues', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map'];
+  const tabs: Tab[] = ['pages', 'links', 'images', 'issues', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf'];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -523,6 +532,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               {t === 'extractions' && `Extractions (${customExtracts.length})`}
               {t === 'serp' && `SERP (${serpResults.length})`}
               {t === 'map' && `Map (${pages.length})`}
+              {t === 'geo' && `GEO (${geoScores.length})`}
+              {t === 'perf' && `Perf (${perfScores.length})`}
             </button>
           ))}
         </div>
@@ -562,6 +573,29 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </button>
             <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} onClick={exportJson}>
               ↓ JSON
+            </button>
+            <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} disabled={reportGenerating || !crawlId} onClick={async () => {
+              if (!crawlId) return;
+              setReportGenerating(true);
+              try {
+                const config: ReportConfig = {
+                  crawlId,
+                  title: reportTitle || 'SEO Audit Report',
+                  companyName: reportCompany || undefined,
+                  analystName: undefined,
+                  sections: ['executive_summary', 'technical_issues', 'content_quality', 'performance', 'geo_readiness', 'internal_links', 'structured_data', 'security', 'images'],
+                  brandColor: '#22c55e',
+                };
+                const result = await window.api.reportGeneratePdf({ config, crawlId });
+                if (result.success) showToast(`PDF saved to ${result.filePath}`, 'success');
+                else showToast(result.error || 'PDF failed', 'error');
+              } catch (err) {
+                showToast(String(err), 'error');
+              } finally {
+                setReportGenerating(false);
+              }
+            }}>
+              {reportGenerating ? '⏳' : '📄'} PDF
             </button>
           </div>
         )}
@@ -697,6 +731,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <Th label="Depth" sortable field="crawlDepth" />
                 <Th label="ms" sortable field="responseTimeMs" />
                 <Th label="Link Score" sortable field="linkScore" />
+                <Th label="GEO" />
+                <Th label="Perf" />
                 <Th label="Inlinks" />
                 <Th label="Outlinks" />
                 <Th label="Indexability" />
@@ -704,7 +740,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {filteredPages.length === 0 ? (
-                <tr><td colSpan={20} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
+                <tr><td colSpan={22} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
                   {pages.length === 0 ? 'Start a crawl to see results' : 'No results match filter'}
                 </td></tr>
               ) : filteredPages.map(p => {
@@ -766,6 +802,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   </td>
                   <td style={{ fontVariantNumeric: 'tabular-nums' }}>{p.responseTimeMs ?? '—'}</td>
                   <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (p.linkScore ?? 0) >= 50 ? 'var(--accent-green)' : 'var(--text-muted)' }}>{p.linkScore?.toFixed(1) ?? '—'}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (() => { const g = geoScores.find(s => s.pageId === p.id); if (!g) return 'var(--text-muted)'; return g.overallScore >= 70 ? 'var(--accent-green)' : g.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'; })() }}>{geoScores.find(s => s.pageId === p.id)?.overallScore?.toFixed(0) ?? '—'}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (() => { const pf = perfScores.find(s => s.pageId === p.id); if (!pf) return 'var(--text-muted)'; return pf.overallScore >= 70 ? 'var(--accent-green)' : pf.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'; })() }}>{perfScores.find(s => s.pageId === p.id)?.overallScore?.toFixed(0) ?? '—'}</td>
                   <td>
                     {inlinks.length > 0 ? (
                       <span
@@ -800,7 +838,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 </tr>
                 {isExpanded && inlinks.length > 0 && (
                   <tr>
-                    <td colSpan={20} style={{ padding: 0, background: 'var(--bg-secondary, rgba(0,0,0,0.05))' }}>
+                    <td colSpan={22} style={{ padding: 0, background: 'var(--bg-secondary, rgba(0,0,0,0.05))' }}>
                       <div style={{ padding: '8px 16px 8px 32px', maxHeight: 200, overflowY: 'auto' }}>
                         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>
                           Inlinks to {p.url} ({inlinks.length})
@@ -1046,6 +1084,176 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
           <SiteMap pages={pages} />
         )}
 
+        {tab === 'geo' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+              <button
+                className="btn-primary"
+                style={{ padding: '6px 14px', fontSize: 12 }}
+                disabled={geoAnalyzing || !crawlId || pages.length === 0}
+                onClick={async () => {
+                  if (!crawlId) return;
+                  setGeoAnalyzing(true);
+                  try {
+                    const result = await window.api.geoAnalyze(crawlId);
+                    if (result.success) {
+                      showToast(`GEO analysis complete: ${result.total} pages scored`, 'success');
+                      const scores = await window.api.geoGetScores(crawlId);
+                      onGeoScoresUpdate?.(scores);
+                    } else {
+                      showToast(result.error || 'GEO analysis failed', 'error');
+                    }
+                  } catch (err) {
+                    showToast(String(err), 'error');
+                  } finally {
+                    setGeoAnalyzing(false);
+                  }
+                }}
+              >
+                {geoAnalyzing ? '⏳ Analyzing…' : '🌐 Run GEO/AEO Analysis'}
+              </button>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{geoScores.length} pages scored</span>
+              {geoScores.length > 0 && (
+                <span style={{ fontSize: 11, color: 'var(--accent-green)', fontWeight: 600, marginLeft: 'auto' }}>
+                  Avg: {(geoScores.reduce((s, g) => s + g.overallScore, 0) / geoScores.length).toFixed(1)}/100
+                </span>
+              )}
+            </div>
+            {geoScores.length > 0 && (
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 16, flexShrink: 0 }}>
+                {(['entityClarity', 'answerReadiness', 'citationSignals', 'structuredDataCompleteness'] as const).map(cat => {
+                  const avg = geoScores.reduce((s, g) => s + g[cat], 0) / geoScores.length;
+                  return (
+                    <div key={cat} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: avg >= 70 ? 'var(--accent-green)' : avg >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)' }}>{avg.toFixed(0)}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{cat.replace(/([A-Z])/g, ' $1').trim()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>URL</th>
+                    <th>Overall</th>
+                    <th>Entity Clarity</th>
+                    <th>Answer Ready</th>
+                    <th>Citation</th>
+                    <th>Structured Data</th>
+                    <th>Issues</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {geoScores.length === 0 ? (
+                    <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>Click "Run GEO/AEO Analysis" to score pages</td></tr>
+                  ) : [...geoScores].sort((a, b) => a.overallScore - b.overallScore).map(g => (
+                    <tr key={g.pageId}>
+                      <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <a href={g.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{g.url}</a>
+                      </td>
+                      <td style={{ fontWeight: 700, color: g.overallScore >= 70 ? 'var(--accent-green)' : g.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)' }}>{g.overallScore.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{g.entityClarity.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{g.answerReadiness.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{g.citationSignals.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{g.structuredDataCompleteness.toFixed(0)}</td>
+                      <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{g.issues.length}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === 'perf' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+              <button
+                className="btn-primary"
+                style={{ padding: '6px 14px', fontSize: 12 }}
+                disabled={perfAnalyzing || !crawlId || pages.length === 0}
+                onClick={async () => {
+                  if (!crawlId) return;
+                  setPerfAnalyzing(true);
+                  try {
+                    const result = await window.api.perfAnalyze(crawlId);
+                    if (result.success) {
+                      showToast(`Performance analysis complete: ${result.total} pages scored`, 'success');
+                      const scores = await window.api.perfGetScores(crawlId);
+                      onPerfScoresUpdate?.(scores);
+                    } else {
+                      showToast(result.error || 'Performance analysis failed', 'error');
+                    }
+                  } catch (err) {
+                    showToast(String(err), 'error');
+                  } finally {
+                    setPerfAnalyzing(false);
+                  }
+                }}
+              >
+                {perfAnalyzing ? '⏳ Analyzing…' : '⚡ Run Performance Analysis'}
+              </button>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{perfScores.length} pages scored</span>
+              {perfScores.length > 0 && (
+                <span style={{ fontSize: 11, color: 'var(--accent-green)', fontWeight: 600, marginLeft: 'auto' }}>
+                  Avg: {(perfScores.reduce((s, p) => s + p.overallScore, 0) / perfScores.length).toFixed(1)}/100
+                </span>
+              )}
+            </div>
+            {perfScores.length > 0 && (
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 16, flexShrink: 0 }}>
+                {([['ttfbScore', 'TTFB'], ['pageSizeScore', 'Page Size'], ['imageOptScore', 'Image Opt'], ['contentEfficiency', 'Content Eff']] as const).map(([key, label]) => {
+                  const avg = perfScores.reduce((s, p) => s + p[key], 0) / perfScores.length;
+                  return (
+                    <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: avg >= 70 ? 'var(--accent-green)' : avg >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)' }}>{avg.toFixed(0)}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>URL</th>
+                    <th>Overall</th>
+                    <th>TTFB</th>
+                    <th>Page Size</th>
+                    <th>Image Opt</th>
+                    <th>Content Eff</th>
+                    <th>TTFB (ms)</th>
+                    <th>Size (KB)</th>
+                    <th>Issues</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {perfScores.length === 0 ? (
+                    <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>Click "Run Performance Analysis" to score pages</td></tr>
+                  ) : [...perfScores].sort((a, b) => a.overallScore - b.overallScore).map(p => (
+                    <tr key={p.pageId}>
+                      <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <a href={p.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{p.url}</a>
+                      </td>
+                      <td style={{ fontWeight: 700, color: p.overallScore >= 70 ? 'var(--accent-green)' : p.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)' }}>{p.overallScore.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{p.ttfbScore.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{p.pageSizeScore.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{p.imageOptScore.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{p.contentEfficiency.toFixed(0)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums', color: p.ttfbMs > 1000 ? 'var(--accent-red)' : p.ttfbMs > 500 ? 'var(--accent-orange)' : 'var(--accent-green)' }}>{p.ttfbMs}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{(p.totalBytes / 1024).toFixed(1)}</td>
+                      <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.issues.length}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {tab === 'serp' && (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             {/* SERP keyword input */}
@@ -1185,6 +1393,28 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         ) : tab === 'map' ? (
           <>
             <span>Pages: {pages.length}</span>
+          </>
+        ) : tab === 'geo' ? (
+          <>
+            <span>Scored: {geoScores.length}</span>
+            {geoScores.length > 0 && (
+              <>
+                <span style={{ color: 'var(--accent-green)' }}>Good (70+): {geoScores.filter(g => g.overallScore >= 70).length}</span>
+                <span style={{ color: 'var(--accent-orange)' }}>Needs Work (40-69): {geoScores.filter(g => g.overallScore >= 40 && g.overallScore < 70).length}</span>
+                <span style={{ color: 'var(--accent-red)' }}>Poor (&lt;40): {geoScores.filter(g => g.overallScore < 40).length}</span>
+              </>
+            )}
+          </>
+        ) : tab === 'perf' ? (
+          <>
+            <span>Scored: {perfScores.length}</span>
+            {perfScores.length > 0 && (
+              <>
+                <span style={{ color: 'var(--accent-green)' }}>Good (70+): {perfScores.filter(p => p.overallScore >= 70).length}</span>
+                <span style={{ color: 'var(--accent-orange)' }}>Needs Work (40-69): {perfScores.filter(p => p.overallScore >= 40 && p.overallScore < 70).length}</span>
+                <span style={{ color: 'var(--accent-red)' }}>Poor (&lt;40): {perfScores.filter(p => p.overallScore < 40).length}</span>
+              </>
+            )}
           </>
         ) : (
           <>
