@@ -317,9 +317,22 @@ export function getAllCrawls(): CrawlRecord[] {
 }
 
 export function getLatestIncompleteCrawl(): CrawlRecord | undefined {
+  // Only treat *intentionally paused* crawls as resumable. A crawl with status='running'
+  // at app start means the previous session crashed/was killed — those are marked
+  // 'interrupted' by markRunningCrawlsAsInterrupted() during startup and won't appear here.
   return db.prepare(
-    CRAWL_SELECT + " WHERE status IN ('running', 'paused') ORDER BY start_time DESC LIMIT 1"
+    CRAWL_SELECT + " WHERE status = 'paused' ORDER BY start_time DESC LIMIT 1"
   ).get() as CrawlRecord | undefined;
+}
+
+/** Called once on app startup. Any crawl still marked 'running' in the DB belongs to
+ *  a previous session that didn't shut down cleanly. Mark them as 'interrupted' so
+ *  they don't pop up the resume prompt on every launch. */
+export function markRunningCrawlsAsInterrupted(): number {
+  const result = db.prepare(
+    "UPDATE crawls SET status = 'interrupted', end_time = COALESCE(end_time, ?) WHERE status = 'running'"
+  ).run(new Date().toISOString());
+  return result.changes;
 }
 
 // ----- Page operations -----

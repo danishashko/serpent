@@ -76,7 +76,19 @@ export class CrawlOrchestrator extends EventEmitter {
 
   async startCrawl(config: CrawlConfig, apiKey?: string, bdZone?: string): Promise<string> {
     if (this.status === 'running') {
-      throw new Error('A crawl is already running. Stop it before starting a new one.');
+      // Only refuse if there's actual work in flight. If the in-memory state got stuck
+      // (e.g. a previous resume that never reached idle), reset and proceed.
+      const hasInFlightWork =
+        this.queue !== null && (this.queue.size > 0 || this.queue.pending > 0);
+      if (hasInFlightWork) {
+        throw new Error('A crawl is already running. Stop it before starting a new one.');
+      }
+      console.warn('[ORCHESTRATOR] status was "running" but queue is empty — resetting stale state');
+      if (this.queue) {
+        this.queue.clear();
+        this.queue = null;
+      }
+      this.status = 'idle';
     }
 
     const id = uuidv4();

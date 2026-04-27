@@ -1,6 +1,6 @@
 {
   "name": "ghostfrog",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AI-native local SEO spider — free Screaming Frog alternative",
   "main": "dist/main/index.js",
   "scripts": {

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import keytar from 'keytar';
-import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks } from './database';
+import { initDatabase, markRunningCrawlsAsInterrupted, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks } from './database';
 import { analyzeGEOBatch } from './geo-analyzer';
 import { analyzePerformanceBatch } from './performance-analyzer';
 import { generatePdfReport } from './report-generator';
@@ -95,6 +95,11 @@ function createWindow(): void {
 app.whenReady().then(() => {
   console.log('[MAIN] app ready — initializing DB');
   initDatabase();
+  // Clear stale state from previous sessions that crashed mid-crawl.
+  const interrupted = markRunningCrawlsAsInterrupted();
+  if (interrupted > 0) {
+    console.log(`[MAIN] marked ${interrupted} stale running crawl(s) as interrupted`);
+  }
   console.log('[MAIN] DB initialized — creating window');
   createWindow();
   console.log('[MAIN] window created');
