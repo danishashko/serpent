@@ -17,6 +17,7 @@ interface Props {
 
 export default function AIInsights({ pages, crawlId, showToast }: Props): React.ReactElement {
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzingPage, setAnalyzingPage] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ total: number; completed: number; currentUrl: string } | null>(null);
   const [results, setResults] = useState<Map<string, AIResult[]>>(new Map());
   const [selectedPage, setSelectedPage] = useState<string | null>(null);
@@ -48,6 +49,33 @@ export default function AIInsights({ pages, crawlId, showToast }: Props): React.
       await loadAllResults();
     } else {
       showToast(`AI analysis failed: ${result.error}`, 'error');
+    }
+  };
+
+  const handleAnalyzePage = async (page: PageData) => {
+    setAnalyzingPage(page.id);
+    const result = await window.api.aiAnalyzePage(page.id, {
+      url: page.url,
+      title: page.title,
+      metaDescription: page.metaDescription,
+      h1: page.h1,
+      wordCount: page.wordCount,
+      statusCode: page.statusCode,
+      canonicalUrl: page.canonicalUrl,
+      isIndexable: page.isIndexable,
+    });
+    setAnalyzingPage(null);
+
+    if (result.success) {
+      showToast(`Analysis complete for ${page.url}`, 'success');
+      const res = await window.api.aiGetResults(page.id) as AIResult[];
+      setResults(prev => {
+        const next = new Map(prev);
+        if (res.length > 0) next.set(page.id, res);
+        return next;
+      });
+    } else {
+      showToast(`Analysis failed: ${result.error}`, 'error');
     }
   };
 
@@ -131,6 +159,8 @@ export default function AIInsights({ pages, crawlId, showToast }: Props): React.
             const contentScore = getPageScore(page.id, 'content');
             const techScore = getPageScore(page.id, 'technical');
             const isSelected = selectedPage === page.id;
+            const hasResults = contentScore !== null || techScore !== null;
+            const isAnalyzingThis = analyzingPage === page.id;
 
             return (
               <div
@@ -142,8 +172,27 @@ export default function AIInsights({ pages, crawlId, showToast }: Props): React.
                   background: isSelected ? 'var(--bg-tertiary)' : 'transparent',
                 }}
               >
-                <div style={{ color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {page.url}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>
+                    {page.url}
+                  </div>
+                  {!hasResults && !isAnalyzingThis && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleAnalyzePage(page); }}
+                      disabled={analyzing}
+                      style={{
+                        fontSize: 10, padding: '2px 6px', cursor: 'pointer', flexShrink: 0,
+                        border: '1px solid var(--border)', borderRadius: 3,
+                        background: 'var(--bg-secondary)', color: 'var(--text-secondary)',
+                      }}
+                      title="Analyze this page"
+                    >
+                      Analyze
+                    </button>
+                  )}
+                  {isAnalyzingThis && (
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>⏳</span>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: 12, marginTop: 2 }}>
                   {contentScore !== null ? (
@@ -181,11 +230,38 @@ export default function AIInsights({ pages, crawlId, showToast }: Props): React.
               {selectedInsights.technical && (
                 <InsightSection title="Technical SEO" data={selectedInsights.technical} />
               )}
+              {!selectedInsights.content && !selectedInsights.technical && selectedPage && (
+                <div style={{ textAlign: 'center', marginTop: 40 }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 8 }}>
+                    No AI insights yet for this page
+                  </div>
+                  <button
+                    onClick={() => {
+                      const page = pages.find(p => p.id === selectedPage);
+                      if (page) handleAnalyzePage(page);
+                    }}
+                    disabled={analyzing || analyzingPage !== null}
+                    style={{
+                      fontSize: 11, padding: '4px 10px', cursor: 'pointer',
+                      border: '1px solid var(--border)', borderRadius: 3,
+                      background: 'var(--bg-secondary)', color: 'var(--text-primary)',
+                    }}
+                  >
+                    {analyzingPage === selectedPage ? 'Analyzing...' : 'Analyze This Page'}
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', marginTop: 40 }}>
               {results.size === 0
-                ? 'Click "Analyze All Pages" to run AI analysis'
+                ? (
+                  <div>
+                    <div style={{ marginBottom: 6 }}>No AI analysis results yet.</div>
+                    <div style={{ fontSize: 11 }}>Click &quot;Analyze All Pages&quot; to analyze everything,<br/>or click &quot;Analyze&quot; on individual pages.</div>
+                    <div style={{ fontSize: 11, marginTop: 8, color: 'var(--text-muted)' }}>Requires an AI provider configured in Settings.</div>
+                  </div>
+                )
                 : 'Select a page to view insights'}
             </div>
           )}

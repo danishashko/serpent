@@ -59,7 +59,9 @@ async function fetchWithElectronRenderer(
 ): Promise<{ html: string; statusCode: number; responseTimeMs: number }> {
   const startTime = Date.now();
   let statusCode = 0;
-  let loadFinished = false;
+
+  // SPA pages need a generous timeout — at least 15 s
+  const effectiveTimeout = Math.max(timeout, 15000);
 
   const win = new BrowserWindow({
     show: false,
@@ -69,7 +71,7 @@ async function fetchWithElectronRenderer(
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true,
-      images: false, // skip image downloads for speed
+      images: true, // keep images enabled — some SPAs depend on them
     },
   });
 
@@ -77,36 +79,70 @@ async function fetchWithElectronRenderer(
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   try {
+    // Phase 1: wait for the page to finish loading
     await Promise.race([
-      new Promise<void>((resolve) => {
+      new Promise<void>((resolve, reject) => {
         // Capture HTTP status code of the main document navigation
         win.webContents.on('did-navigate', (_e, _navUrl, httpResponseCode) => {
           statusCode = httpResponseCode;
         });
-        // Network error / blocked
-        win.webContents.on('did-fail-load', () => {
-          resolve();
-        });
-        // Page finished loading — give JS 800 ms to execute before we grab HTML
-        win.webContents.on('did-stop-loading', () => {
-          if (!loadFinished) {
-            loadFinished = true;
-            setTimeout(resolve, 800);
+
+        // Only treat main-frame failures as load errors
+        win.webContents.on(
+          'did-fail-load',
+          (_e: Electron.Event, errorCode: number, errorDescription: string, _validatedURL: string, isMainFrame: boolean) => {
+            if (isMainFrame) {
+              console.error(`[JS-RENDER] Main frame failed: ${errorCode} ${errorDescription} for ${url}`);
+              reject(new Error(`did-fail-load: ${errorCode} ${errorDescription}`));
+            }
+            // Sub-frame failures are ignored
           }
-        });
-        win.webContents.loadURL(url).catch(() => resolve());
+        );
+
+        win.webContents.loadURL(url)
+          .then(() => {
+            // loadURL resolves when did-finish-load fires → page + JS parsed
+            resolve();
+          })
+          .catch((err: Error) => {
+            console.error(`[JS-RENDER] loadURL rejected for ${url}:`, err.message);
+            reject(err);
+          });
       }),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('js-render timeout')), timeout)
+        setTimeout(() => reject(new Error('js-render timeout (phase 1)')), effectiveTimeout)
       ),
     ]);
+
+    // Phase 2: give the SPA time to render — poll until anchors appear or max wait
+    const spaWait = Math.min(5000, effectiveTimeout - (Date.now() - startTime));
+    const pollInterval = 300;
+    let waited = 0;
+    while (waited < spaWait) {
+      const anchorCount = (await win.webContents.executeJavaScript(
+        'document.querySelectorAll("a[href]").length'
+      )) as number;
+      if (anchorCount > 0) break;
+      await new Promise(r => setTimeout(r, pollInterval));
+      waited += pollInterval;
+    }
 
     const html = (await win.webContents.executeJavaScript(
       'document.documentElement.outerHTML'
     )) as string;
 
     return { html, statusCode: statusCode || 200, responseTimeMs: Date.now() - startTime };
-  } catch {
+  } catch (err) {
+    // Even on timeout/error, try to grab whatever HTML rendered so far
+    console.error(`[JS-RENDER] Error for ${url}:`, (err as Error).message);
+    try {
+      const partialHtml = (await win.webContents.executeJavaScript(
+        'document.documentElement.outerHTML'
+      )) as string;
+      if (partialHtml && partialHtml.length > 200) {
+        return { html: partialHtml, statusCode: statusCode || 200, responseTimeMs: Date.now() - startTime };
+      }
+    } catch { /* window already destroyed or unreachable */ }
     return { html: '', statusCode: 0, responseTimeMs: Date.now() - startTime };
   } finally {
     if (!win.isDestroyed()) win.destroy();

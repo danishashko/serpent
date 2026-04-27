@@ -191,6 +191,36 @@ function createTables(): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_perf_scores_crawl_id ON performance_scores(crawl_id);
+
+    CREATE TABLE IF NOT EXISTS discover_results (
+      id TEXT PRIMARY KEY,
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      search_type TEXT NOT NULL,
+      link TEXT NOT NULL,
+      title TEXT,
+      description TEXT,
+      relevance_score REAL NOT NULL DEFAULT 0,
+      content TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_discover_results_crawl_id ON discover_results(crawl_id);
+
+    CREATE TABLE IF NOT EXISTS content_gaps (
+      id TEXT PRIMARY KEY,
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      topic TEXT NOT NULL,
+      has_own_content INTEGER NOT NULL DEFAULT 0,
+      own_content_count INTEGER NOT NULL DEFAULT 0,
+      competitor_count INTEGER NOT NULL DEFAULT 0,
+      competitor_domains_json TEXT,
+      top_competitor_urls_json TEXT,
+      avg_relevance_score REAL NOT NULL DEFAULT 0,
+      gap_severity TEXT NOT NULL DEFAULT 'none',
+      analyzed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_content_gaps_crawl_id ON content_gaps(crawl_id);
   `);
 
   // Add content_hash column if it doesn't exist (migration for existing DBs)
@@ -824,6 +854,138 @@ export function getPerformanceScoresByCrawl(crawlId: string): PerformanceScore[]
     issues: JSON.parse((r.issues_json as string) || '[]'),
     analyzedAt: r.analyzed_at as string,
   }));
+}
+
+// ── Targeted export queries ──
+
+export function getInlinksForUrls(crawlId: string, targetUrls: string[]): LinkData[] {
+  if (!db || targetUrls.length === 0) return [];
+  const placeholders = targetUrls.map(() => '?').join(',');
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, source_url as sourceUrl, target_url as targetUrl,
+      is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr
+    FROM links WHERE crawl_id = ? AND target_url IN (${placeholders})
+  `).all(crawlId, ...targetUrls) as LinkData[];
+}
+
+export function getOutlinksForUrls(crawlId: string, sourceUrls: string[]): LinkData[] {
+  if (!db || sourceUrls.length === 0) return [];
+  const placeholders = sourceUrls.map(() => '?').join(',');
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, source_url as sourceUrl, target_url as targetUrl,
+      is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr
+    FROM links WHERE crawl_id = ? AND source_url IN (${placeholders})
+  `).all(crawlId, ...sourceUrls) as LinkData[];
+}
+
+export function getImagesForUrls(crawlId: string, pageUrls: string[]): ImageData[] {
+  if (!db || pageUrls.length === 0) return [];
+  const placeholders = pageUrls.map(() => '?').join(',');
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, page_url as pageUrl, image_url as imageUrl,
+      alt_text as altText, format, has_width as hasWidth, has_height as hasHeight,
+      is_lazy as isLazy
+    FROM images WHERE crawl_id = ? AND page_url IN (${placeholders})
+  `).all(crawlId, ...pageUrls) as ImageData[];
+}
+
+export function getInlinksToStatusCode(crawlId: string, statusMin: number, statusMax: number): LinkData[] {
+  if (!db) return [];
+  return db.prepare(`
+    SELECT l.id, l.crawl_id as crawlId, l.source_url as sourceUrl, l.target_url as targetUrl,
+      l.is_internal as isInternal, l.anchor_text as anchorText, l.rel_attr as relAttr
+    FROM links l
+    INNER JOIN pages p ON l.crawl_id = p.crawl_id AND l.target_url = p.url
+    WHERE l.crawl_id = ? AND p.status_code >= ? AND p.status_code < ?
+  `).all(crawlId, statusMin, statusMax) as LinkData[];
+}
+
+export function getPagesByStatusRange(crawlId: string, statusMin: number, statusMax: number): PageData[] {
+  if (!db) return [];
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, url, status_code as statusCode, content_type as contentType,
+      title, title_length as titleLength, title_pixel_width as titlePixelWidth,
+      meta_description as metaDescription, meta_desc_length as metaDescLength,
+      meta_desc_pixel_width as metaDescPixelWidth, h1, h2,
+      word_count as wordCount, canonical_url as canonicalUrl,
+      is_canonicalized as isCanonicalized, is_indexable as isIndexable,
+      response_time_ms as responseTimeMs, page_size_bytes as pageSizeBytes,
+      crawl_depth as crawlDepth, cost_usd as costUsd, created_at as createdAt,
+      content_hash as contentHash,
+      h1_length as h1Length, h2_length as h2Length,
+      h1_count as h1Count, h2_count as h2Count,
+      robots_directives as robotsDirectives, meta_keywords as metaKeywords,
+      text_ratio as textRatio,
+      og_title as ogTitle, og_description as ogDescription,
+      og_image as ogImage, og_type as ogType,
+      twitter_card as twitterCard, twitter_title as twitterTitle,
+      twitter_description as twitterDescription, twitter_image as twitterImage,
+      schema_types as schemaTypes, schema_json as schemaJson,
+      schema_errors as schemaErrors, has_structured_data as hasStructuredData,
+      has_hsts as hasHSTS, has_csp as hasCSP,
+      x_frame_options as xFrameOptions, x_content_type_options as xContentTypeOptions,
+      image_count as imageCount, link_score as linkScore
+    FROM pages WHERE crawl_id = ? AND status_code >= ? AND status_code < ?
+    ORDER BY created_at ASC
+  `).all(crawlId, statusMin, statusMax) as PageData[];
+}
+
+export function getNonIndexablePages(crawlId: string): PageData[] {
+  if (!db) return [];
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, url, status_code as statusCode, content_type as contentType,
+      title, title_length as titleLength, title_pixel_width as titlePixelWidth,
+      meta_description as metaDescription, meta_desc_length as metaDescLength,
+      meta_desc_pixel_width as metaDescPixelWidth, h1, h2,
+      word_count as wordCount, canonical_url as canonicalUrl,
+      is_canonicalized as isCanonicalized, is_indexable as isIndexable,
+      response_time_ms as responseTimeMs, page_size_bytes as pageSizeBytes,
+      crawl_depth as crawlDepth, cost_usd as costUsd, created_at as createdAt,
+      content_hash as contentHash,
+      h1_length as h1Length, h2_length as h2Length,
+      h1_count as h1Count, h2_count as h2Count,
+      robots_directives as robotsDirectives, meta_keywords as metaKeywords,
+      text_ratio as textRatio,
+      og_title as ogTitle, og_description as ogDescription,
+      og_image as ogImage, og_type as ogType,
+      twitter_card as twitterCard, twitter_title as twitterTitle,
+      twitter_description as twitterDescription, twitter_image as twitterImage,
+      schema_types as schemaTypes, schema_json as schemaJson,
+      schema_errors as schemaErrors, has_structured_data as hasStructuredData,
+      has_hsts as hasHSTS, has_csp as hasCSP,
+      x_frame_options as xFrameOptions, x_content_type_options as xContentTypeOptions,
+      image_count as imageCount, link_score as linkScore
+    FROM pages WHERE crawl_id = ? AND is_indexable = 0
+    ORDER BY created_at ASC
+  `).all(crawlId) as PageData[];
+}
+
+export function getImagesMissingAlt(crawlId: string): ImageData[] {
+  if (!db) return [];
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, page_url as pageUrl, image_url as imageUrl,
+      alt_text as altText, format, has_width as hasWidth, has_height as hasHeight,
+      is_lazy as isLazy
+    FROM images WHERE crawl_id = ? AND (alt_text IS NULL OR alt_text = '')
+  `).all(crawlId) as ImageData[];
+}
+
+export function getInternalLinks(crawlId: string): LinkData[] {
+  if (!db) return [];
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, source_url as sourceUrl, target_url as targetUrl,
+      is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr
+    FROM links WHERE crawl_id = ? AND is_internal = 1
+  `).all(crawlId) as LinkData[];
+}
+
+export function getExternalLinks(crawlId: string): LinkData[] {
+  if (!db) return [];
+  return db.prepare(`
+    SELECT id, crawl_id as crawlId, source_url as sourceUrl, target_url as targetUrl,
+      is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr
+    FROM links WHERE crawl_id = ? AND is_internal = 0
+  `).all(crawlId) as LinkData[];
 }
 
 export function closeDatabase(): void {

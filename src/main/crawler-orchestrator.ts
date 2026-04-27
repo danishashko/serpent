@@ -28,75 +28,12 @@ import {
   getCrawledUrls,
   getLatestIncompleteCrawl,
 } from './database';
+import { parseRobotsTxt, checkPath, type RobotsRuleSet } from './robots-tester';
 
-// ─── Simple robots.txt parser ──────────────────────────────────────────────────
-
-interface RobotsTxtRules {
-  disallowed: string[];
-  allowed: string[];
-}
-
-function parseRobotsTxt(body: string, userAgent: string = '*'): RobotsTxtRules {
-  const lines = body.split('\n').map(l => l.trim());
-  const rules: RobotsTxtRules = { disallowed: [], allowed: [] };
-  let currentAgentMatches = false;
-  let foundSpecificAgent = false;
-
-  for (const line of lines) {
-    if (line.startsWith('#') || line === '') {
-      // Blank line resets current agent block
-      if (line === '') currentAgentMatches = false;
-      continue;
-    }
-
-    const lower = line.toLowerCase();
-    if (lower.startsWith('user-agent:')) {
-      const agent = line.slice('user-agent:'.length).trim().toLowerCase();
-      if (agent === userAgent.toLowerCase() || agent === '*') {
-        currentAgentMatches = true;
-        if (agent !== '*') foundSpecificAgent = true;
-      } else {
-        currentAgentMatches = false;
-      }
-    } else if (currentAgentMatches && lower.startsWith('disallow:')) {
-      const path = line.slice('disallow:'.length).trim();
-      if (path) rules.disallowed.push(path);
-    } else if (currentAgentMatches && lower.startsWith('allow:')) {
-      const path = line.slice('allow:'.length).trim();
-      if (path) rules.allowed.push(path);
-    }
-  }
-
-  // If we found specific agent rules, only use those (re-parse)
-  if (foundSpecificAgent && userAgent !== '*') {
-    return parseRobotsTxt(body, userAgent);
-  }
-
-  return rules;
-}
-
-function isUrlAllowedByRobots(urlPath: string, rules: RobotsTxtRules): boolean {
-  // Check allowed first (more specific takes precedence by length)
-  let longestAllow = -1;
-  let longestDisallow = -1;
-
-  for (const pattern of rules.allowed) {
-    if (urlPath.startsWith(pattern)) {
-      longestAllow = Math.max(longestAllow, pattern.length);
-    }
-  }
-
-  for (const pattern of rules.disallowed) {
-    if (urlPath.startsWith(pattern)) {
-      longestDisallow = Math.max(longestDisallow, pattern.length);
-    }
-  }
-
-  // If both match, longer pattern wins. If equal length, allow wins.
-  if (longestDisallow < 0) return true; // Nothing disallowed
-  if (longestAllow >= longestDisallow) return true; // Allow is more specific
-  return false;
-}
+// ─── Robots.txt enforcement (delegated to robots-tester.ts) ────────────────────
+// Re-exported here so existing callers (and tests) keep working.
+export { parseRobotsTxt, checkPath } from './robots-tester';
+export type { RobotsRuleSet } from './robots-tester';
 
 export class CrawlOrchestrator extends EventEmitter {
   private queue: PQueue | null = null;
@@ -113,26 +50,37 @@ export class CrawlOrchestrator extends EventEmitter {
   private startTime = 0;
   private apiKey: string | null = null;
   private bdZone: string = 'web_unlocker1';
-  private robotsRules: RobotsTxtRules | null = null;
+  private robotsRules: RobotsRuleSet | null = null;
+  private robotsUserAgent: string = 'GhostFrog';
 
-  private async fetchRobotsTxt(origin: string): Promise<void> {
+  private async loadRobots(origin: string, customBody: string | undefined): Promise<void> {
+    // Custom robots.txt overrides any HTTP fetch (used by tests + advanced mode).
+    if (typeof customBody === 'string' && customBody.length > 0) {
+      this.robotsRules = parseRobotsTxt(customBody, this.robotsUserAgent);
+      return;
+    }
     try {
       const response = await axios.get(`${origin}/robots.txt`, {
         timeout: 10000,
         validateStatus: (s) => s < 500,
       });
       if (response.status === 200 && typeof response.data === 'string') {
-        this.robotsRules = parseRobotsTxt(response.data, 'GhostFrog');
+        this.robotsRules = parseRobotsTxt(response.data, this.robotsUserAgent);
       } else {
-        this.robotsRules = { disallowed: [], allowed: [] }; // No robots.txt = all allowed
+        this.robotsRules = { agent: '*', rules: [] }; // No robots.txt = all allowed
       }
     } catch {
-      this.robotsRules = { disallowed: [], allowed: [] }; // Fetch failed = all allowed
+      this.robotsRules = { agent: '*', rules: [] }; // Fetch failed = all allowed
     }
   }
 
   async startCrawl(config: CrawlConfig, apiKey?: string, bdZone?: string): Promise<string> {
-    this.crawlId = uuidv4();
+    if (this.status === 'running') {
+      throw new Error('A crawl is already running. Stop it before starting a new one.');
+    }
+
+    const id = uuidv4();
+    this.crawlId = id;
     this.config = config;
     this.visited.clear();
     this.pending.clear();
@@ -148,13 +96,14 @@ export class CrawlOrchestrator extends EventEmitter {
     const baseUrl = new URL(config.startUrl);
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
+    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'GhostFrog';
 
     if (config.respectRobots) {
-      await this.fetchRobotsTxt(this.baseOrigin);
+      await this.loadRobots(this.baseOrigin, config.customRobotsTxt);
     }
 
     const crawlRecord: CrawlRecord = {
-      id: this.crawlId,
+      id: id,
       mode: config.engine,
       startUrl: config.startUrl,
       startTime: new Date().toISOString(),
@@ -272,9 +221,10 @@ export class CrawlOrchestrator extends EventEmitter {
     const baseUrl = new URL(config.startUrl);
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
+    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'GhostFrog';
 
     if (config.respectRobots) {
-      await this.fetchRobotsTxt(this.baseOrigin);
+      await this.loadRobots(this.baseOrigin, config.customRobotsTxt);
     }
 
     // Rebuild visited set from already-crawled URLs
@@ -321,22 +271,24 @@ export class CrawlOrchestrator extends EventEmitter {
   }
 
   private enqueueUrl(url: string, depth: number): void {
-    if (!this.config) return;
-    if (this.visited.has(url) || this.pending.has(url)) return;
-    if (this.config.maxUrls > 0 && this.totalQueued >= this.config.maxUrls) return;
-    if (this.config.maxDepth > 0 && depth > this.config.maxDepth) return;
+    if (!this.config) { console.log('[CRAWL-DBG] enqueueUrl: no config'); return; }
+    if (this.visited.has(url) || this.pending.has(url)) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (already seen): ${url}`); return; }
+    if (this.config.maxUrls > 0 && this.totalQueued >= this.config.maxUrls) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (maxUrls ${this.config.maxUrls} reached): ${url}`); return; }
+    if (this.config.maxDepth > 0 && depth > this.config.maxDepth) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (maxDepth ${this.config.maxDepth}, depth ${depth}): ${url}`); return; }
 
     // Scope check
     try {
       const parsed = new URL(url);
-      if (parsed.origin !== this.baseOrigin) return;
+      if (parsed.origin !== this.baseOrigin) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (origin mismatch: ${parsed.origin} vs ${this.baseOrigin}): ${url}`); return; }
 
       // robots.txt check
-      if (this.robotsRules && !isUrlAllowedByRobots(parsed.pathname, this.robotsRules)) return;
+      if (this.robotsRules && !checkPath(parsed.pathname + (parsed.search || ''), this.robotsRules).allowed) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (robots): ${url}`); return; }
     } catch {
+      console.log(`[CRAWL-DBG] enqueueUrl SKIP (URL parse error): ${url}`);
       return;
     }
 
+    console.log(`[CRAWL-DBG] enqueueUrl OK depth=${depth}: ${url}`);
     this.pending.add(url);
     this.totalQueued++;
     this.queue!.add(() => this.processUrl(url, depth));
@@ -371,6 +323,7 @@ export class CrawlOrchestrator extends EventEmitter {
     }
 
     this.emit('url-start', url);
+    console.log(`[CRAWL-DBG] processUrl START depth=${depth}: ${url}`);
 
     try {
       let result: Awaited<ReturnType<typeof crawlPageLocal>>;
@@ -393,6 +346,17 @@ export class CrawlOrchestrator extends EventEmitter {
         );
         this.totalSpend += bdResult.page.costUsd;
         result = bdResult;
+      }
+
+      // Spider mode: enqueue discovered URLs FIRST (before DB ops that might fail)
+      console.log(`[CRAWL-DBG] processUrl DONE: ${url} | discovered=${result.discoveredUrls.length} links=${result.links.length} status=${result.page.statusCode} mode=${this.config.mode}`);
+      if (result.discoveredUrls.length > 0) {
+        console.log(`[CRAWL-DBG] First 5 discovered:`, result.discoveredUrls.slice(0, 5));
+      }
+      if (this.config.mode === 'spider') {
+        for (const discoveredUrl of result.discoveredUrls) {
+          this.enqueueUrl(discoveredUrl, depth + 1);
+        }
       }
 
       // Store to DB
@@ -446,13 +410,6 @@ export class CrawlOrchestrator extends EventEmitter {
         if (this.responseTimes.length > 100) this.responseTimes.shift();
       }
 
-      // Spider mode: enqueue discovered URLs
-      if (this.config.mode === 'spider') {
-        for (const discoveredUrl of result.discoveredUrls) {
-          this.enqueueUrl(discoveredUrl, depth + 1);
-        }
-      }
-
       // Save progress every 10 pages
       if (this.completedCount % 10 === 0) {
         updateCrawlStatus(this.crawlId, 'running', this.totalQueued, this.completedCount, this.totalSpend);
@@ -460,6 +417,7 @@ export class CrawlOrchestrator extends EventEmitter {
 
       this.emitProgress(url);
     } catch (err) {
+      console.error(`[CRAWL-DBG] processUrl ERROR: ${url}`, err);
       this.emit('url-error', { url, error: err });
       this.completedCount++;
       this.emitProgress(url);

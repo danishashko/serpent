@@ -107,6 +107,15 @@ input, textarea, select {
   transition: border-color 0.15s;
   width: 100%;
 }
+input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--accent-blue);
+  cursor: pointer;
+  flex-shrink: 0;
+}
 input:focus, textarea:focus, select:focus {
   border-color: var(--border-focus);
 }

@@ -43,7 +43,6 @@ export async function crawlPageBrightData(
         zone,
         url,
         format: 'raw',
-        render_js: true,
         country: 'us',
       },
       {

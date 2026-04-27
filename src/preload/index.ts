@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, CrawlConfig, AppSettings, AIProvider, ReportConfig } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, ReportConfig, BulkExportRequest, PerUrlExportRequest, RobotsTestRequest, SitemapGenerateOptions } from '../types/index';
 
 // Expose a safe, typed API to the renderer process
 contextBridge.exposeInMainWorld('api', {
@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // AI
   aiAnalyze: (crawlId: string) => ipcRenderer.invoke(IPC.AI_ANALYZE, crawlId),
+  aiAnalyzePage: (pageId: string, pageData: { url: string; title: string | null; metaDescription: string | null; h1: string | null; wordCount: number | null; statusCode: number | null; canonicalUrl: string | null; isIndexable: boolean | null }) => ipcRenderer.invoke(IPC.AI_ANALYZE_PAGE, pageId, pageData),
   aiGetResults: (pageId: string) => ipcRenderer.invoke(IPC.AI_GET_RESULTS, pageId),
   aiAnalyzeIssues: (data: { crawlId: string; issueType: string; severity: string; affectedPages: { url: string; title?: string | null; statusCode?: number | null }[] }) =>
     ipcRenderer.invoke(IPC.AI_ANALYZE_ISSUES, data),
@@ -93,4 +94,27 @@ contextBridge.exposeInMainWorld('api', {
   // Reports
   reportGeneratePdf: (data: { config: ReportConfig; crawlId: string }) =>
     ipcRenderer.invoke(IPC.REPORT_GENERATE_PDF, data),
+
+  // Flexible Export
+  exportBulk: (req: BulkExportRequest) => ipcRenderer.invoke(IPC.EXPORT_BULK, req),
+  exportPerUrl: (req: PerUrlExportRequest) => ipcRenderer.invoke(IPC.EXPORT_PER_URL, req),
+
+  // Discover (Competitor Discovery + Content Gap)
+  discoverCompetitors: (data: { crawlId: string; domain: string; keywords: string[]; country?: string }) =>
+    ipcRenderer.invoke(IPC.DISCOVER_COMPETITORS, data),
+  discoverContentGaps: (data: { crawlId: string; domain: string; topics: string[]; country?: string }) =>
+    ipcRenderer.invoke(IPC.DISCOVER_CONTENT_GAPS, data),
+  discoverGetResults: (crawlId: string, searchType?: string) =>
+    ipcRenderer.invoke(IPC.DISCOVER_GET_RESULTS, { crawlId, searchType }),
+  discoverGetGaps: (crawlId: string) =>
+    ipcRenderer.invoke(IPC.DISCOVER_GET_GAPS, crawlId),
+
+  // Robots.txt tester
+  testRobots: (req: RobotsTestRequest) => ipcRenderer.invoke(IPC.ROBOTS_TEST, req),
+
+  // Sitemap (XML)
+  generateSitemap: (opts: SitemapGenerateOptions) =>
+    ipcRenderer.invoke(IPC.SITEMAP_GENERATE, opts),
+  analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) =>
+    ipcRenderer.invoke(IPC.SITEMAP_ANALYZE, payload),
 });

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import keytar from 'keytar';
-import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl } from './database';
+import { initDatabase, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks } from './database';
 import { analyzeGEOBatch } from './geo-analyzer';
 import { analyzePerformanceBatch } from './performance-analyzer';
 import { generatePdfReport } from './report-generator';
@@ -9,8 +9,12 @@ import { CrawlOrchestrator } from './crawler-orchestrator';
 import { testBrightDataConnection } from './crawler-brightdata';
 import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO, analyzeIssueGroup, testAIProviderConnection, AIProviderConfig } from './ai-analyzer';
 import { querySerpBatch, storeSerpResults, getSerpResults } from './serp-client';
+import { discoverCompetitors, discoverContentGaps, getDiscoverResults, getContentGaps } from './discover-client';
 import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, setGSCCredentials } from './gsc-client';
-import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig } from '../types/index';
+import { generateSitemap as buildSitemap } from './sitemap-generator';
+import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
+import { testRobots as runRobotsTest } from './robots-tester';
+import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions } from '../types/index';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
 
@@ -45,16 +49,36 @@ function createWindow(): void {
     show: false,
   });
 
+  // Fallback: if ready-to-show hasn't fired in 8 s, force-show the window
+  const showTimeout = setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      console.warn('[MAIN] ready-to-show timeout — force-showing window');
+      mainWindow.show();
+    }
+  }, 8000);
+
+  mainWindow.once('ready-to-show', () => {
+    clearTimeout(showTimeout);
+    console.log('[MAIN] ready-to-show fired — showing window');
+    mainWindow?.show();
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url, isMain) => {
+    console.error(`[MAIN] did-fail-load: ${code} ${desc} url=${url} isMain=${isMain}`);
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[MAIN] render-process-gone:', details);
+  });
+
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL('http://localhost:5173').catch((err: Error) => {
+      console.error('[MAIN] loadURL failed:', err.message);
+    });
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
-
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -69,8 +93,11 @@ function createWindow(): void {
 // ─── App Lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
+  console.log('[MAIN] app ready — initializing DB');
   initDatabase();
+  console.log('[MAIN] DB initialized — creating window');
   createWindow();
+  console.log('[MAIN] window created');
 
   // Auto-update (silent check, only in production)
   if (!isDev) {
@@ -263,6 +290,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const openaiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key');
   const anthropicApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'anthropic_api_key');
   const geminiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key');
+  const openrouterApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'openrouter_api_key');
 
   const settings: AppSettings = {
     brightDataApiKey: apiKey || null,
@@ -278,6 +306,8 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
     anthropicModel: getConfig('anthropic_model') || 'claude-sonnet-4-20250514',
     geminiApiKey: geminiApiKey || null,
     geminiModel: getConfig('gemini_model') || 'gemini-2.0-flash',
+    openrouterApiKey: openrouterApiKey || null,
+    openrouterModel: getConfig('openrouter_model') || 'openai/gpt-5.4-mini',
     defaultEngine: (getConfig('default_engine') as AppSettings['defaultEngine']) || 'local',
     defaultStorageMode: (getConfig('default_storage_mode') as AppSettings['defaultStorageMode']) || 'database',
   };
@@ -326,6 +356,14 @@ ipcMain.handle(IPC.SETTINGS_SAVE, async (_event, settings: Partial<AppSettings>)
       }
     }
     if (settings.geminiModel !== undefined) setConfig('gemini_model', settings.geminiModel);
+    if (settings.openrouterApiKey !== undefined) {
+      if (settings.openrouterApiKey) {
+        await keytar.setPassword(KEYTAR_SERVICE, 'openrouter_api_key', settings.openrouterApiKey);
+      } else {
+        await keytar.deletePassword(KEYTAR_SERVICE, 'openrouter_api_key').catch(() => {});
+      }
+    }
+    if (settings.openrouterModel !== undefined) setConfig('openrouter_model', settings.openrouterModel);
     if (settings.defaultEngine !== undefined) setConfig('default_engine', settings.defaultEngine);
     if (settings.defaultStorageMode !== undefined) setConfig('default_storage_mode', settings.defaultStorageMode);
 
@@ -369,6 +407,11 @@ async function buildAIProviderConfig(): Promise<{ config: AIProviderConfig } | {
       const key = await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key');
       if (!key) return { error: 'Gemini API key not configured. Go to Settings.' };
       return { config: { provider: 'gemini', model: getConfig('gemini_model') || 'gemini-2.0-flash', apiKey: key } };
+    }
+    case 'openrouter': {
+      const key = await keytar.getPassword(KEYTAR_SERVICE, 'openrouter_api_key');
+      if (!key) return { error: 'OpenRouter API key not configured. Go to Settings.' };
+      return { config: { provider: 'openrouter', model: getConfig('openrouter_model') || 'openai/gpt-5.4-mini', apiKey: key } };
     }
     default:
       return { config: { provider: 'ollama', model: getConfig('ollama_model') || 'llama3', ollamaUrl: getConfig('ollama_url') || 'http://localhost:11434' } };
@@ -428,6 +471,52 @@ ipcMain.handle(IPC.AI_ANALYZE, async (_event, crawlId: string) => {
     }
 
     return { success: true, total: analyzed };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.AI_ANALYZE_PAGE, async (_event, pageId: string, pageData: { url: string; title: string | null; metaDescription: string | null; h1: string | null; wordCount: number | null; statusCode: number | null; canonicalUrl: string | null; isIndexable: boolean | null }) => {
+  try {
+    const result = await buildAIProviderConfig();
+    if ('error' in result) return { success: false, error: result.error };
+    const providerConfig = result.config;
+
+    const analysisInput = {
+      url: pageData.url,
+      title: pageData.title,
+      metaDescription: pageData.metaDescription,
+      h1: pageData.h1,
+      wordCount: pageData.wordCount,
+      statusCode: pageData.statusCode,
+      canonicalUrl: pageData.canonicalUrl,
+      isIndexable: pageData.isIndexable ?? true,
+    };
+
+    const [contentResult, technicalResult] = await Promise.all([
+      analyzeContentQuality(analysisInput, providerConfig),
+      analyzeTechnicalSEO(analysisInput, providerConfig),
+    ]);
+
+    const now = new Date().toISOString();
+
+    upsertAIAnalysis({
+      pageId,
+      analysisType: 'content',
+      score: contentResult.score,
+      insightsJson: JSON.stringify(contentResult),
+      createdAt: now,
+    });
+
+    upsertAIAnalysis({
+      pageId,
+      analysisType: 'technical',
+      score: technicalResult.score,
+      insightsJson: JSON.stringify(technicalResult),
+      createdAt: now,
+    });
+
+    return { success: true };
   } catch (err) {
     return { success: false, error: String(err) };
   }
@@ -575,5 +664,406 @@ ipcMain.handle(IPC.REPORT_GENERATE_PDF, async (_event, data: { config: ReportCon
     return generatePdfReport({ config: data.config, pages, links, images, geoScores, perfScores });
   } catch (err) {
     return { success: false, error: String(err) };
+  }
+});
+
+// ─── Bulk / Flexible Export IPC Handlers ────────────────────────────────────────
+
+function buildCsvString(rows: Record<string, unknown>[]): string {
+  if (rows.length === 0) return '';
+  const keys = Object.keys(rows[0]);
+  const header = keys.join(',');
+  const lines = rows.map(row =>
+    keys.map(k => {
+      const val = row[k];
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    }).join(',')
+  );
+  return [header, ...lines].join('\n');
+}
+
+function pageToFullRow(p: PageData): Record<string, unknown> {
+  return {
+    url: p.url, status_code: p.statusCode ?? '', content_type: p.contentType ?? '',
+    title: p.title ?? '', title_length: p.titleLength ?? '', title_px: p.titlePixelWidth ?? '',
+    meta_description: p.metaDescription ?? '', meta_length: p.metaDescLength ?? '',
+    meta_px: p.metaDescPixelWidth ?? '', h1: p.h1 ?? '', h1_length: p.h1Length ?? '',
+    h1_count: p.h1Count ?? '', h2: p.h2 ?? '', h2_length: p.h2Length ?? '', h2_count: p.h2Count ?? '',
+    word_count: p.wordCount ?? '', text_ratio: p.textRatio ?? '',
+    page_size_bytes: p.pageSizeBytes ?? '', crawl_depth: p.crawlDepth,
+    canonical: p.canonicalUrl ?? '', is_canonicalized: p.isCanonicalized ? 'true' : 'false',
+    indexable: p.isIndexable ? 'true' : 'false', response_ms: p.responseTimeMs ?? '',
+    robots_directives: p.robotsDirectives ?? '', meta_keywords: p.metaKeywords ?? '',
+    og_title: p.ogTitle ?? '', og_description: p.ogDescription ?? '',
+    og_image: p.ogImage ?? '', og_type: p.ogType ?? '',
+    twitter_card: p.twitterCard ?? '', twitter_title: p.twitterTitle ?? '',
+    twitter_description: p.twitterDescription ?? '', twitter_image: p.twitterImage ?? '',
+    schema_types: p.schemaTypes ?? '', has_structured_data: p.hasStructuredData ? 'true' : 'false',
+    has_hsts: p.hasHSTS ? 'true' : 'false', has_csp: p.hasCSP ? 'true' : 'false',
+    x_frame_options: p.xFrameOptions ?? '', x_content_type_options: p.xContentTypeOptions ?? '',
+    image_count: p.imageCount, link_score: p.linkScore, content_hash: p.contentHash ?? '',
+  };
+}
+
+function linkToRow(l: LinkData): Record<string, unknown> {
+  return {
+    source_url: l.sourceUrl, target_url: l.targetUrl, anchor_text: l.anchorText ?? '',
+    type: l.isInternal ? 'internal' : 'external', rel: l.relAttr ?? '',
+  };
+}
+
+function imageToRow(img: ImageData): Record<string, unknown> {
+  return {
+    image_url: img.imageUrl, source_page: img.pageUrl, alt_text: img.altText ?? '',
+    format: img.format ?? '', has_width: img.hasWidth ? 'true' : 'false',
+    has_height: img.hasHeight ? 'true' : 'false', is_lazy: img.isLazy ? 'true' : 'false',
+  };
+}
+
+function geoToRow(g: GEOScore): Record<string, unknown> {
+  return {
+    url: g.url, overall_score: g.overallScore, entity_clarity: g.entityClarity,
+    answer_readiness: g.answerReadiness, citation_signals: g.citationSignals,
+    structured_data_completeness: g.structuredDataCompleteness,
+    issues: g.issues.map(i => i.message).join(' | '),
+  };
+}
+
+function perfToRow(p: PerformanceScore): Record<string, unknown> {
+  return {
+    url: p.url, overall_score: p.overallScore, ttfb_score: p.ttfbScore,
+    page_size_score: p.pageSizeScore, image_opt_score: p.imageOptScore,
+    content_efficiency: p.contentEfficiency, ttfb_ms: p.ttfbMs,
+    total_bytes: p.totalBytes, image_bytes: p.imageBytes,
+    issues: p.issues.map(i => i.message).join(' | '),
+  };
+}
+
+function getCategoryData(crawlId: string, category: BulkExportCategory): { rows: Record<string, unknown>[]; label: string } {
+  switch (category) {
+    case 'all_inlinks': {
+      const links = getLinksByCrawl(crawlId);
+      return { rows: links.map(linkToRow), label: 'all-inlinks' };
+    }
+    case 'all_outlinks': {
+      const links = getLinksByCrawl(crawlId);
+      return { rows: links.map(linkToRow), label: 'all-outlinks' };
+    }
+    case 'internal_links': {
+      const links = getInternalLinks(crawlId);
+      return { rows: links.map(linkToRow), label: 'internal-links' };
+    }
+    case 'external_links': {
+      const links = getExternalLinks(crawlId);
+      return { rows: links.map(linkToRow), label: 'external-links' };
+    }
+    case 'inlinks_to_3xx': {
+      const links = getInlinksToStatusCode(crawlId, 300, 400);
+      return { rows: links.map(linkToRow), label: 'inlinks-to-3xx' };
+    }
+    case 'inlinks_to_4xx': {
+      const links = getInlinksToStatusCode(crawlId, 400, 500);
+      return { rows: links.map(linkToRow), label: 'inlinks-to-4xx' };
+    }
+    case 'inlinks_to_5xx': {
+      const links = getInlinksToStatusCode(crawlId, 500, 600);
+      return { rows: links.map(linkToRow), label: 'inlinks-to-5xx' };
+    }
+    case 'all_pages_full': {
+      const pages = getPagesByCrawl(crawlId);
+      return { rows: pages.map(pageToFullRow), label: 'all-pages-full' };
+    }
+    case 'pages_2xx': {
+      const pages = getPagesByStatusRange(crawlId, 200, 300);
+      return { rows: pages.map(pageToFullRow), label: 'pages-2xx' };
+    }
+    case 'pages_3xx': {
+      const pages = getPagesByStatusRange(crawlId, 300, 400);
+      return { rows: pages.map(pageToFullRow), label: 'pages-3xx' };
+    }
+    case 'pages_4xx': {
+      const pages = getPagesByStatusRange(crawlId, 400, 500);
+      return { rows: pages.map(pageToFullRow), label: 'pages-4xx' };
+    }
+    case 'pages_5xx': {
+      const pages = getPagesByStatusRange(crawlId, 500, 600);
+      return { rows: pages.map(pageToFullRow), label: 'pages-5xx' };
+    }
+    case 'non_indexable_pages': {
+      const pages = getNonIndexablePages(crawlId);
+      return { rows: pages.map(pageToFullRow), label: 'non-indexable' };
+    }
+    case 'all_images': {
+      const images = getImagesByCrawl(crawlId);
+      return { rows: images.map(imageToRow), label: 'all-images' };
+    }
+    case 'images_missing_alt': {
+      const images = getImagesMissingAlt(crawlId);
+      return { rows: images.map(imageToRow), label: 'images-missing-alt' };
+    }
+    case 'geo_scores': {
+      const scores = getGEOScoresByCrawl(crawlId);
+      return { rows: scores.map(geoToRow), label: 'geo-scores' };
+    }
+    case 'perf_scores': {
+      const scores = getPerformanceScoresByCrawl(crawlId);
+      return { rows: scores.map(perfToRow), label: 'perf-scores' };
+    }
+    case 'redirects': {
+      const redirects = getRedirectsByCrawl(crawlId);
+      return {
+        rows: redirects.map(r => ({
+          source_url: r.sourceUrl, target_url: r.targetUrl, status_code: r.statusCode,
+          hop_number: r.hopNumber, final_url: r.finalUrl,
+        })),
+        label: 'redirects',
+      };
+    }
+    case 'hreflang': {
+      const hreflang = getHreflangByCrawl(crawlId);
+      return {
+        rows: hreflang.map(h => ({ page_url: h.pageUrl, hreflang: h.hreflang, href: h.href })),
+        label: 'hreflang',
+      };
+    }
+    case 'duplicates': {
+      const dupes = getDuplicatesByCrawl(crawlId);
+      return {
+        rows: dupes.map(d => ({ content_hash: d.contentHash, urls: d.urls.join(' | '), count: d.urls.length })),
+        label: 'duplicates',
+      };
+    }
+    case 'custom_extractions': {
+      const extracts = getCustomExtractionsByCrawl(crawlId);
+      return {
+        rows: extracts.map(e => ({ page_url: e.pageUrl, rule_name: e.ruleName, selector: e.selector, value: e.value ?? '' })),
+        label: 'custom-extractions',
+      };
+    }
+    default:
+      return { rows: [], label: 'unknown' };
+  }
+}
+
+function writeExportFile(filePath: string, rows: Record<string, unknown>[], format: ExportFormat): void {
+  if (format === 'csv') {
+    fs.writeFileSync(filePath, buildCsvString(rows), 'utf8');
+  } else {
+    fs.writeFileSync(filePath, JSON.stringify(rows, null, 2), 'utf8');
+  }
+}
+
+ipcMain.handle(IPC.EXPORT_BULK, async (_event, req: BulkExportRequest) => {
+  try {
+    const { crawlId, categories, format } = req;
+    const ext = format === 'csv' ? 'csv' : 'json';
+
+    if (categories.length === 1) {
+      // Single category: save as single file
+      const { rows, label } = getCategoryData(crawlId, categories[0]);
+      if (rows.length === 0) return { success: false, error: 'No data for this export' };
+      const { filePath } = await dialog.showSaveDialog({
+        defaultPath: `ghostfrog-${label}.${ext}`,
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+      });
+      if (!filePath) return { success: false, cancelled: true };
+      writeExportFile(filePath, rows, format);
+      return { success: true, filePath, totalRows: rows.length };
+    }
+
+    // Multiple categories: pick a folder, save as separate files
+    const { filePaths } = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+      title: 'Select folder for bulk export',
+    });
+    if (!filePaths || filePaths.length === 0) return { success: false, cancelled: true };
+
+    const dir = filePaths[0];
+    let totalFiles = 0;
+    let totalRows = 0;
+    for (const cat of categories) {
+      const { rows, label } = getCategoryData(crawlId, cat);
+      if (rows.length === 0) continue;
+      const outPath = path.join(dir, `ghostfrog-${label}.${ext}`);
+      writeExportFile(outPath, rows, format);
+      totalFiles++;
+      totalRows += rows.length;
+    }
+    return { success: true, filePath: dir, totalFiles, totalRows };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.EXPORT_PER_URL, async (_event, req: PerUrlExportRequest) => {
+  try {
+    const { crawlId, urls, type, format } = req;
+    const ext = format === 'csv' ? 'csv' : 'json';
+
+    let rows: Record<string, unknown>[] = [];
+    let label = '';
+    if (type === 'inlinks') {
+      const links = getInlinksForUrls(crawlId, urls);
+      rows = links.map(linkToRow);
+      label = 'inlinks';
+    } else if (type === 'outlinks') {
+      const links = getOutlinksForUrls(crawlId, urls);
+      rows = links.map(linkToRow);
+      label = 'outlinks';
+    } else if (type === 'images') {
+      const images = getImagesForUrls(crawlId, urls);
+      rows = images.map(imageToRow);
+      label = 'images';
+    }
+
+    if (rows.length === 0) return { success: false, error: 'No data for selected URLs' };
+
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: `ghostfrog-${label}-${urls.length}-pages.${ext}`,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+    });
+    if (!filePath) return { success: false, cancelled: true };
+    writeExportFile(filePath, rows, format);
+    return { success: true, filePath, totalRows: rows.length };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+// ─── Discover (Competitor Discovery + Content Gap) ────────────────────────────
+
+ipcMain.handle(IPC.DISCOVER_COMPETITORS, async (_event, data: { crawlId: string; domain: string; keywords: string[]; country?: string }) => {
+  try {
+    const apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
+    if (!apiKey) return { success: false, error: 'Bright Data API key not configured' };
+    const results = await discoverCompetitors(data.crawlId, data.domain, data.keywords, apiKey, data.country);
+    return { success: true, results, total: Array.isArray(results) ? results.length : 0 };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.DISCOVER_CONTENT_GAPS, async (_event, data: { crawlId: string; domain: string; topics: string[]; country?: string }) => {
+  try {
+    const apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
+    if (!apiKey) return { success: false, error: 'Bright Data API key not configured' };
+    const pages = getPagesByCrawl(data.crawlId);
+    const crawledUrls = pages.map(p => p.url);
+    const crawledTitles = pages.map(p => p.title || '');
+    const gaps = await discoverContentGaps(data.crawlId, data.domain, data.topics, crawledUrls, crawledTitles, apiKey, data.country);
+    return { success: true, gaps, total: Array.isArray(gaps) ? gaps.length : 0 };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.DISCOVER_GET_RESULTS, async (_event, data: { crawlId: string; searchType?: string }) => {
+  try {
+    return getDiscoverResults(data.crawlId, data.searchType);
+  } catch (err) {
+    return [];
+  }
+});
+
+ipcMain.handle(IPC.DISCOVER_GET_GAPS, async (_event, crawlId: string) => {
+  try {
+    return getContentGaps(crawlId);
+  } catch (err) {
+    return [];
+  }
+});
+
+// ─── Robots.txt tester ───────────────────────────────────────────────────────
+
+ipcMain.handle(IPC.ROBOTS_TEST, async (_event, req: RobotsTestRequest) => {
+  try {
+    return runRobotsTest(req);
+  } catch (err) {
+    return {
+      allowed: true,
+      matchedRule: `Error: ${(err as Error).message}`,
+      ruleType: 'none' as const,
+      appliedAgent: '*',
+    };
+  }
+});
+
+// ─── Sitemap: generate ────────────────────────────────────────────────────────
+
+ipcMain.handle(IPC.SITEMAP_GENERATE, async (_event, opts: SitemapGenerateOptions) => {
+  try {
+    const pages = getPagesByCrawl(opts.crawlId);
+    const bundle = buildSitemap(pages, opts);
+
+    // Ask user where to write. Default filename is the index when present,
+    // else the single sitemap file.
+    const defaultName = bundle.index ? bundle.index.filename : bundle.files[0]?.filename ?? 'sitemap.xml';
+    const result = await dialog.showSaveDialog({
+      title: 'Save Sitemap',
+      defaultPath: defaultName,
+      filters: [{ name: 'XML Sitemap', extensions: ['xml'] }],
+    });
+    if (result.canceled || !result.filePath) {
+      return {
+        ok: false,
+        canceled: true,
+        totalUrls: bundle.totalUrls,
+        files: bundle.files.map((f) => ({ filename: f.filename, urlCount: f.urlCount })),
+      };
+    }
+
+    const dir = path.dirname(result.filePath);
+    // Always write child sitemap files alongside, using their default names.
+    const written: string[] = [];
+    for (const f of bundle.files) {
+      const target = path.join(dir, f.filename);
+      fs.writeFileSync(target, f.xml, 'utf8');
+      written.push(target);
+    }
+    if (bundle.index) {
+      // Honour user-supplied filename for the top-level index.
+      fs.writeFileSync(result.filePath, bundle.index.xml, 'utf8');
+      written.push(result.filePath);
+    } else {
+      // Single-file: rename if user picked a different filename.
+      if (path.basename(result.filePath) !== bundle.files[0].filename) {
+        fs.writeFileSync(result.filePath, bundle.files[0].xml, 'utf8');
+        written.push(result.filePath);
+      }
+    }
+    return {
+      ok: true,
+      canceled: false,
+      totalUrls: bundle.totalUrls,
+      files: bundle.files.map((f) => ({ filename: f.filename, urlCount: f.urlCount })),
+      written,
+    };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+});
+
+// ─── Sitemap: analyze ─────────────────────────────────────────────────────────
+
+ipcMain.handle(IPC.SITEMAP_ANALYZE, async (_event, payload: { crawlId: string; sitemapUrl: string }) => {
+  try {
+    const pages = getPagesByCrawl(payload.crawlId);
+    return await runSitemapAnalyze(payload.sitemapUrl, pages);
+  } catch (err) {
+    return {
+      sitemapUrl: payload.sitemapUrl,
+      fetchedSitemaps: [],
+      urlsInSitemap: [],
+      notInSitemap: [],
+      orphanFromSitemap: [],
+      nonIndexableInSitemap: [],
+      duplicateInSitemap: [],
+      errors: [(err as Error).message],
+    };
   }
 });

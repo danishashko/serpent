@@ -1,7 +1,10 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig } from '../../types/index';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap } from '../../types/index';
 import CrawlComparison from './CrawlComparison';
 import SiteMap from './SiteMap';
+import ExportModal from './ExportModal';
+import IssuesTab from './IssuesTab';
+import SitemapPanel from './SitemapPanel';
 
 interface Props {
   pages: PageData[];
@@ -20,9 +23,13 @@ interface Props {
   serpLoading?: boolean;
   onGeoScoresUpdate?: (scores: GEOScore[]) => void;
   onPerfScoresUpdate?: (scores: PerformanceScore[]) => void;
+  discoverResults: DiscoverResult[];
+  contentGaps: ContentGap[];
+  onDiscoverResultsUpdate?: (results: DiscoverResult[]) => void;
+  onContentGapsUpdate?: (gaps: ContentGap[]) => void;
 }
 
-type Tab = 'pages' | 'links' | 'images' | 'issues' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map' | 'geo' | 'perf';
+type Tab = 'pages' | 'links' | 'images' | 'issues_v2' | 'issues' | 'sitemap' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map' | 'geo' | 'perf' | 'competitors' | 'content_gaps';
 type IssueFilter =
   | 'all'
   | 'missing_title'
@@ -159,7 +166,7 @@ const severityColor = (severity: IssueSeverity): string => {
   }
 };
 
-export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, geoScores, perfScores, crawlId, showToast, onSerpQuery, serpLoading, onGeoScoresUpdate, onPerfScoresUpdate }: Props): React.ReactElement {
+export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, geoScores, perfScores, crawlId, showToast, onSerpQuery, serpLoading, onGeoScoresUpdate, onPerfScoresUpdate, discoverResults, contentGaps, onDiscoverResultsUpdate, onContentGapsUpdate }: Props): React.ReactElement {
   const [tab, setTab] = useState<Tab>('pages');
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
   const [search, setSearch] = useState('');
@@ -179,6 +186,18 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   const [reportGenerating, setReportGenerating] = useState(false);
   const reportTitle = 'SEO Audit Report';
   const reportCompany = '';
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; url: string } | null>(null);
+  // Discover — Competitor Discovery
+  const [competitorDomain, setCompetitorDomain] = useState('');
+  const [competitorKeywords, setCompetitorKeywords] = useState('');
+  const [competitorCountry, setCompetitorCountry] = useState('US');
+  const [competitorAnalyzing, setCompetitorAnalyzing] = useState(false);
+  // Discover — Content Gap
+  const [gapDomain, setGapDomain] = useState('');
+  const [gapTopics, setGapTopics] = useState('');
+  const [gapCountry, setGapCountry] = useState('US');
+  const [gapAnalyzing, setGapAnalyzing] = useState(false);
 
   // Load cached AI issue recommendations when crawlId changes
   useEffect(() => {
@@ -407,6 +426,14 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
           inlinks: (inlinkMap.get(p.url) ?? []).length, outlinks: outlinkMap.get(p.url) ?? 0,
           robots_directives: p.robotsDirectives ?? '', meta_keywords: p.metaKeywords ?? '',
           text_ratio: p.textRatio ?? '',
+          og_title: p.ogTitle ?? '', og_description: p.ogDescription ?? '',
+          og_image: p.ogImage ?? '', og_type: p.ogType ?? '',
+          twitter_card: p.twitterCard ?? '', twitter_title: p.twitterTitle ?? '',
+          twitter_description: p.twitterDescription ?? '', twitter_image: p.twitterImage ?? '',
+          schema_types: p.schemaTypes ?? '', has_structured_data: p.hasStructuredData ? 'true' : 'false',
+          has_hsts: p.hasHSTS ? 'true' : 'false', has_csp: p.hasCSP ? 'true' : 'false',
+          x_frame_options: p.xFrameOptions ?? '', x_content_type_options: p.xContentTypeOptions ?? '',
+          image_count: p.imageCount ?? '', link_score: p.linkScore ?? '', content_hash: p.contentHash ?? '',
         })),
         filename: `${prefix}-pages.${ext}`,
       };
@@ -426,6 +453,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
       return {
         rows: filtered.map(img => ({
           image_url: img.imageUrl, alt_text: img.altText ?? '', source_page: img.pageUrl,
+          format: img.format ?? '', has_width: img.hasWidth ? 'true' : 'false',
+          has_height: img.hasHeight ? 'true' : 'false', is_lazy: img.isLazy ? 'true' : 'false',
         })),
         filename: `${prefix}-images.${ext}`,
       };
@@ -475,8 +504,49 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         filename: `${prefix}-extractions.${ext}`,
       };
     }
+    if (tab === 'geo') {
+      return {
+        rows: geoScores.map(g => ({
+          url: g.url, overall_score: g.overallScore, entity_clarity: g.entityClarity,
+          answer_readiness: g.answerReadiness, citation_signals: g.citationSignals,
+          structured_data_completeness: g.structuredDataCompleteness,
+          issues: g.issues.map(i => i.message).join(' | '),
+        })),
+        filename: `${prefix}-geo-scores.${ext}`,
+      };
+    }
+    if (tab === 'perf') {
+      return {
+        rows: perfScores.map(p => ({
+          url: p.url, overall_score: p.overallScore, ttfb_score: p.ttfbScore,
+          page_size_score: p.pageSizeScore, image_opt_score: p.imageOptScore,
+          content_efficiency: p.contentEfficiency, ttfb_ms: p.ttfbMs,
+          total_bytes: p.totalBytes, image_bytes: p.imageBytes,
+          issues: p.issues.map(i => i.message).join(' | '),
+        })),
+        filename: `${prefix}-perf-scores.${ext}`,
+      };
+    }
     return { rows: [], filename: '' };
   };
+
+  const handlePerUrlExport = async (url: string, type: 'inlinks' | 'outlinks' | 'images', format: 'csv' | 'json') => {
+    if (!crawlId) return;
+    try {
+      const result = await (window as any).api.exportPerUrl({ crawlId, urls: [url], type, format });
+      if (result.success) showToast(`${type} exported (${result.totalRows} rows)`, 'success');
+      else if (!result.cancelled) showToast(result.error || 'Export failed', 'error');
+    } catch (err) { showToast(String(err), 'error'); }
+    setContextMenu(null);
+  };
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [contextMenu]);
 
   const handleSerpQuery = () => {
     if (!onSerpQuery || !crawlId) return;
@@ -495,7 +565,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     </th>
   );
 
-  const tabs: Tab[] = ['pages', 'links', 'images', 'issues', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf'];
+  const tabs: Tab[] = ['pages', 'links', 'images', 'issues_v2', 'issues', 'sitemap', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf', 'competitors', 'content_gaps'];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -525,7 +595,9 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               {t === 'pages' && `Pages (${pages.length})`}
               {t === 'links' && `Links (${links.length})`}
               {t === 'images' && `Images (${images.length})`}
-              {t === 'issues' && `Issues (${totalIssueCount})`}
+              {t === 'issues_v2' && 'Issues'}
+              {t === 'sitemap' && 'Sitemap'}
+              {t === 'issues' && `Issues List (${totalIssueCount})`}
               {t === 'redirects' && `Redirects (${redirects.length})`}
               {t === 'hreflang' && `Hreflang (${hreflang.length})`}
               {t === 'duplicates' && `Duplicates (${duplicates.length})`}
@@ -534,6 +606,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               {t === 'map' && `Map (${pages.length})`}
               {t === 'geo' && `GEO (${geoScores.length})`}
               {t === 'perf' && `Perf (${perfScores.length})`}
+              {t === 'competitors' && `Competitors (${discoverResults.length})`}
+              {t === 'content_gaps' && `Gaps (${contentGaps.length})`}
             </button>
           ))}
         </div>
@@ -573,6 +647,9 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </button>
             <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} onClick={exportJson}>
               ↓ JSON
+            </button>
+            <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} disabled={!crawlId} onClick={() => setShowExportModal(true)}>
+              ⤓ Bulk Export
             </button>
             <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} disabled={reportGenerating || !crawlId} onClick={async () => {
               if (!crawlId) return;
@@ -748,7 +825,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 const isExpanded = expandedInlinks === p.url;
                 return (
                 <React.Fragment key={p.id}>
-                <tr>
+                <tr onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, url: p.url }); }}>
                   <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <a href={p.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>
                       {p.url}
@@ -872,6 +949,16 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               })}
             </tbody>
           </table>
+        )}
+
+        {tab === 'issues_v2' && (
+          <div style={{ height: '100%', padding: 12 }}>
+            <IssuesTab pages={pages} />
+          </div>
+        )}
+
+        {tab === 'sitemap' && (
+          <SitemapPanel crawlId={crawlId} pages={pages} />
         )}
 
         {tab === 'links' && (
@@ -1336,6 +1423,201 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </div>
           </div>
         )}
+
+        {tab === 'competitors' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'flex-end', flexShrink: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Your Domain</label>
+                <input className="input" style={{ width: 180, padding: '4px 8px', fontSize: 12 }} placeholder="example.com" value={competitorDomain} onChange={e => setCompetitorDomain(e.target.value)} />
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Keywords (one per line)</label>
+                <textarea
+                  className="input"
+                  style={{ height: 60, fontSize: 12, resize: 'none', fontFamily: 'inherit' }}
+                  placeholder={'seo spider tool\nwebsite crawler\nsite audit tool'}
+                  value={competitorKeywords}
+                  onChange={e => setCompetitorKeywords(e.target.value)}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Country</label>
+                <input className="input" style={{ width: 60, padding: '4px 8px', fontSize: 12 }} value={competitorCountry} onChange={e => setCompetitorCountry(e.target.value)} />
+              </div>
+              <button
+                className="btn-primary"
+                style={{ padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap' }}
+                disabled={competitorAnalyzing || !crawlId || !competitorDomain.trim() || !competitorKeywords.trim()}
+                onClick={async () => {
+                  if (!crawlId) return;
+                  setCompetitorAnalyzing(true);
+                  try {
+                    const keywords = competitorKeywords.split('\n').map(k => k.trim()).filter(Boolean);
+                    const result = await window.api.discoverCompetitors({ crawlId, domain: competitorDomain.trim(), keywords, country: competitorCountry || undefined });
+                    if (result.success && result.results) {
+                      showToast(`Found ${result.total} competitor pages`, 'success');
+                      onDiscoverResultsUpdate?.(result.results);
+                    } else {
+                      showToast(result.error || 'Competitor discovery failed', 'error');
+                    }
+                  } catch (err) {
+                    showToast(String(err), 'error');
+                  } finally {
+                    setCompetitorAnalyzing(false);
+                  }
+                }}
+              >
+                {competitorAnalyzing ? '⏳ Discovering…' : '🔍 Discover Competitors'}
+              </button>
+            </div>
+            {discoverResults.length > 0 && (
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 16, flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{discoverResults.length} results</span>
+                <span style={{ fontSize: 11, color: 'var(--accent-green)' }}>High relevance (≥0.7): {discoverResults.filter(r => r.relevanceScore >= 0.7).length}</span>
+                <span style={{ fontSize: 11, color: 'var(--accent-orange)' }}>Medium (0.4–0.7): {discoverResults.filter(r => r.relevanceScore >= 0.4 && r.relevanceScore < 0.7).length}</span>
+                <span style={{ fontSize: 11, color: 'var(--accent-red)' }}>Low (&lt;0.4): {discoverResults.filter(r => r.relevanceScore < 0.4).length}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>Domains: {new Set(discoverResults.map(r => { try { return new URL(r.link).hostname; } catch { return r.link; } })).size}</span>
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>URL</th>
+                    <th>Domain</th>
+                    <th>Title</th>
+                    <th>Description</th>
+                    <th>Relevance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {discoverResults.length === 0 ? (
+                    <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>Enter your domain and target keywords above to discover competitors</td></tr>
+                  ) : [...discoverResults].sort((a, b) => b.relevanceScore - a.relevanceScore).map((r, i) => (
+                    <tr key={i}>
+                      <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <a href={r.link} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{r.link}</a>
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
+                        {(() => { try { return new URL(r.link).hostname; } catch { return '—'; } })()}
+                      </td>
+                      <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</td>
+                      <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)', fontSize: 12 }}>{r.description}</td>
+                      <td style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: r.relevanceScore >= 0.7 ? 'var(--accent-green)' : r.relevanceScore >= 0.4 ? 'var(--accent-orange)' : 'var(--accent-red)' }}>
+                        {(r.relevanceScore * 100).toFixed(0)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === 'content_gaps' && (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'flex-end', flexShrink: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Your Domain</label>
+                <input className="input" style={{ width: 180, padding: '4px 8px', fontSize: 12 }} placeholder="example.com" value={gapDomain} onChange={e => setGapDomain(e.target.value)} />
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Topics (one per line)</label>
+                <textarea
+                  className="input"
+                  style={{ height: 60, fontSize: 12, resize: 'none', fontFamily: 'inherit' }}
+                  placeholder={'technical seo guide\ncrawl budget optimization\ncore web vitals'}
+                  value={gapTopics}
+                  onChange={e => setGapTopics(e.target.value)}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Country</label>
+                <input className="input" style={{ width: 60, padding: '4px 8px', fontSize: 12 }} value={gapCountry} onChange={e => setGapCountry(e.target.value)} />
+              </div>
+              <button
+                className="btn-primary"
+                style={{ padding: '6px 14px', fontSize: 12, whiteSpace: 'nowrap' }}
+                disabled={gapAnalyzing || !crawlId || !gapDomain.trim() || !gapTopics.trim()}
+                onClick={async () => {
+                  if (!crawlId) return;
+                  setGapAnalyzing(true);
+                  try {
+                    const topics = gapTopics.split('\n').map(t => t.trim()).filter(Boolean);
+                    const result = await window.api.discoverContentGaps({ crawlId, domain: gapDomain.trim(), topics, country: gapCountry || undefined });
+                    if (result.success && result.gaps) {
+                      showToast(`Analyzed ${result.total} topics for content gaps`, 'success');
+                      onContentGapsUpdate?.(result.gaps);
+                    } else {
+                      showToast(result.error || 'Content gap analysis failed', 'error');
+                    }
+                  } catch (err) {
+                    showToast(String(err), 'error');
+                  } finally {
+                    setGapAnalyzing(false);
+                  }
+                }}
+              >
+                {gapAnalyzing ? '⏳ Analyzing…' : '📊 Analyze Content Gaps'}
+              </button>
+            </div>
+            {contentGaps.length > 0 && (
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 16, flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{contentGaps.length} topics analyzed</span>
+                <span style={{ fontSize: 11, color: 'var(--accent-red)' }}>High: {contentGaps.filter(g => g.gapSeverity === 'high').length}</span>
+                <span style={{ fontSize: 11, color: 'var(--accent-orange)' }}>Medium: {contentGaps.filter(g => g.gapSeverity === 'medium').length}</span>
+                <span style={{ fontSize: 11, color: 'var(--accent-blue)' }}>Low: {contentGaps.filter(g => g.gapSeverity === 'low').length}</span>
+                <span style={{ fontSize: 11, color: 'var(--accent-green)' }}>None: {contentGaps.filter(g => g.gapSeverity === 'none').length}</span>
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Topic</th>
+                    <th>Severity</th>
+                    <th>Own Content</th>
+                    <th>Own Count</th>
+                    <th>Competitor Count</th>
+                    <th>Top Competitor Domains</th>
+                    <th>Avg Relevance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contentGaps.length === 0 ? (
+                    <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>Enter topics above to analyze content gaps against competitors</td></tr>
+                  ) : [...contentGaps].sort((a, b) => {
+                    const order = { high: 0, medium: 1, low: 2, none: 3 };
+                    return (order[a.gapSeverity] ?? 4) - (order[b.gapSeverity] ?? 4);
+                  }).map((g, i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 500 }}>{g.topic}</td>
+                      <td>
+                        <span style={{
+                          display: 'inline-block', padding: '2px 8px', borderRadius: 9999, fontSize: 11, fontWeight: 600,
+                          background: g.gapSeverity === 'high' ? 'var(--accent-red)' : g.gapSeverity === 'medium' ? 'var(--accent-orange)' : g.gapSeverity === 'low' ? 'var(--accent-blue)' : 'var(--accent-green)',
+                          color: '#fff',
+                        }}>
+                          {g.gapSeverity}
+                        </span>
+                      </td>
+                      <td style={{ color: g.hasOwnContent ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 600 }}>{g.hasOwnContent ? 'Yes' : 'No'}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{g.ownContentCount}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums', color: g.competitorCount > 5 ? 'var(--accent-red)' : g.competitorCount > 2 ? 'var(--accent-orange)' : 'var(--text-secondary)' }}>{g.competitorCount}</td>
+                      <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-muted)' }}>
+                        {g.competitorDomains.slice(0, 3).join(', ')}{g.competitorDomains.length > 3 ? ` +${g.competitorDomains.length - 3}` : ''}
+                      </td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: g.avgRelevanceScore >= 0.7 ? 'var(--accent-green)' : g.avgRelevanceScore >= 0.4 ? 'var(--accent-orange)' : 'var(--accent-red)' }}>
+                        {(g.avgRelevanceScore * 100).toFixed(0)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>}
 
       {/* Status bar */}
@@ -1416,6 +1698,28 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               </>
             )}
           </>
+        ) : tab === 'competitors' ? (
+          <>
+            <span>Results: {discoverResults.length}</span>
+            {discoverResults.length > 0 && (
+              <>
+                <span style={{ color: 'var(--accent-green)' }}>High: {discoverResults.filter(r => r.relevanceScore >= 0.7).length}</span>
+                <span style={{ color: 'var(--accent-orange)' }}>Medium: {discoverResults.filter(r => r.relevanceScore >= 0.4 && r.relevanceScore < 0.7).length}</span>
+                <span>Domains: {new Set(discoverResults.map(r => { try { return new URL(r.link).hostname; } catch { return r.link; } })).size}</span>
+              </>
+            )}
+          </>
+        ) : tab === 'content_gaps' ? (
+          <>
+            <span>Topics: {contentGaps.length}</span>
+            {contentGaps.length > 0 && (
+              <>
+                <span style={{ color: 'var(--accent-red)' }}>High: {contentGaps.filter(g => g.gapSeverity === 'high').length}</span>
+                <span style={{ color: 'var(--accent-orange)' }}>Medium: {contentGaps.filter(g => g.gapSeverity === 'medium').length}</span>
+                <span style={{ color: 'var(--accent-green)' }}>Covered: {contentGaps.filter(g => g.gapSeverity === 'none').length}</span>
+              </>
+            )}
+          </>
         ) : (
           <>
             <span>Total: {images.length}</span>
@@ -1426,6 +1730,46 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
           <span>Showing: {filteredPages.length}</span>
         )}
       </div>
+
+      {/* Bulk Export Modal */}
+      {showExportModal && crawlId && (
+        <ExportModal crawlId={crawlId} onClose={() => setShowExportModal(false)} showToast={showToast} />
+      )}
+
+      {/* Right-click context menu for page rows */}
+      {contextMenu && (
+        <div
+          style={{
+            position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 300,
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', padding: 4, minWidth: 180,
+            boxShadow: 'var(--shadow)',
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ padding: '4px 8px', fontSize: 11, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 250 }}>
+            {contextMenu.url}
+          </div>
+          {(['inlinks', 'outlinks', 'images'] as const).map(type => (
+            <div key={type} style={{ display: 'flex' }}>
+              <button
+                className="btn-ghost"
+                style={{ flex: 1, textAlign: 'left', fontSize: 12, padding: '4px 8px', borderRadius: 0 }}
+                onClick={() => handlePerUrlExport(contextMenu.url, type, 'csv')}
+              >
+                Export {type} (CSV)
+              </button>
+              <button
+                className="btn-ghost"
+                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 0, color: 'var(--text-muted)' }}
+                onClick={() => handlePerUrlExport(contextMenu.url, type, 'json')}
+              >
+                JSON
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

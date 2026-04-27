@@ -11,3 +11,12 @@ Thumbs.db
 *.log
 coverage/
 .vite/
+playwright-report/
+test-results/
+e2e/.tmp/
+
+# Planning / research docs (not part of the open-source repo)
+BUSINESS_MODEL.md
+FEATURE-PROPOSALS*.md
+REDDIT-RESEARCH*.md
+PLAN.md

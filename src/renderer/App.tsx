@@ -4,7 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -51,6 +51,7 @@ declare global {
       testOllama: (url: string) => Promise<{ success: boolean; models: unknown[] }>;
       testAIProvider: (provider: string, config: { ollamaUrl?: string; apiKey?: string }) => Promise<{ success: boolean; models?: string[] }>;
       aiAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
+      aiAnalyzePage: (pageId: string, pageData: { url: string; title: string | null; metaDescription: string | null; h1: string | null; wordCount: number | null; statusCode: number | null; canonicalUrl: string | null; isIndexable: boolean | null }) => Promise<{ success: boolean; error?: string }>;
       aiGetResults: (pageId: string) => Promise<unknown[]>;
       aiAnalyzeIssues: (data: { crawlId: string; issueType: string; severity: string; affectedPages: { url: string; title?: string | null; statusCode?: number | null }[] }) => Promise<{ success: boolean; recommendation?: IssueRecommendation; error?: string }>;
       aiGetIssueRecs: (crawlId: string) => Promise<IssueRecommendation[]>;
@@ -70,6 +71,13 @@ declare global {
       perfAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
       perfGetScores: (crawlId: string) => Promise<PerformanceScore[]>;
       reportGeneratePdf: (data: { config: ReportConfig; crawlId: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
+      discoverCompetitors: (data: { crawlId: string; domain: string; keywords: string[]; country?: string }) => Promise<{ success: boolean; results?: DiscoverResult[]; total?: number; error?: string }>;
+      discoverContentGaps: (data: { crawlId: string; domain: string; topics: string[]; country?: string }) => Promise<{ success: boolean; gaps?: ContentGap[]; total?: number; error?: string }>;
+      discoverGetResults: (crawlId: string, searchType?: string) => Promise<DiscoverResult[]>;
+      discoverGetGaps: (crawlId: string) => Promise<ContentGap[]>;
+      testRobots: (req: RobotsTestRequest) => Promise<RobotsTestResult>;
+      generateSitemap: (opts: SitemapGenerateOptions) => Promise<{ ok: boolean; canceled?: boolean; totalUrls?: number; files?: { filename: string; urlCount: number }[]; written?: string[]; error?: string }>;
+      analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) => Promise<SitemapAnalysisResult>;
     };
   }
 }
@@ -93,6 +101,8 @@ export default function App(): React.ReactElement {
   const [customExtracts, setCustomExtracts] = useState<CustomExtractionResult[]>([]);
   const [geoScores, setGeoScores] = useState<GEOScore[]>([]);
   const [perfScores, setPerfScores] = useState<PerformanceScore[]>([]);
+  const [discoverResults, setDiscoverResults] = useState<DiscoverResult[]>([]);
+  const [contentGaps, setContentGaps] = useState<ContentGap[]>([]);
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = toastCounter + 1;
@@ -125,6 +135,9 @@ export default function App(): React.ReactElement {
     // Load GEO + Performance scores (non-blocking)
     window.api.geoGetScores(crawlId).then(setGeoScores).catch(() => {});
     window.api.perfGetScores(crawlId).then(setPerfScores).catch(() => {});
+    // Load Discover results (non-blocking)
+    window.api.discoverGetResults(crawlId).then(setDiscoverResults).catch(() => {});
+    window.api.discoverGetGaps(crawlId).then(setContentGaps).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -196,6 +209,8 @@ export default function App(): React.ReactElement {
     setCustomExtracts([]);
     setGeoScores([]);
     setPerfScores([]);
+    setDiscoverResults([]);
+    setContentGaps([]);
   };
 
   const handleSerpQuery = async (keywords: string[], location?: string, device?: 'desktop' | 'mobile') => {
@@ -338,6 +353,10 @@ export default function App(): React.ReactElement {
                   serpLoading={serpLoading}
                   onGeoScoresUpdate={setGeoScores}
                   onPerfScoresUpdate={setPerfScores}
+                  discoverResults={discoverResults}
+                  contentGaps={contentGaps}
+                  onDiscoverResultsUpdate={setDiscoverResults}
+                  onContentGapsUpdate={setContentGaps}
                 />
               ) : (
                 <AIInsights

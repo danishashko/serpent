@@ -19,6 +19,8 @@ const defaultSettings: AppSettings = {
   anthropicModel: 'claude-sonnet-4-20250514',
   geminiApiKey: null,
   geminiModel: 'gemini-2.0-flash',
+  openrouterApiKey: null,
+  openrouterModel: 'openai/gpt-5.4-mini',
   defaultEngine: 'local',
   defaultStorageMode: 'database',
 };
@@ -28,6 +30,7 @@ const AI_PROVIDERS: { value: AIProvider; label: string; icon: string }[] = [
   { value: 'openai', label: 'OpenAI', icon: '🟢' },
   { value: 'anthropic', label: 'Anthropic', icon: '🟠' },
   { value: 'gemini', label: 'Google Gemini', icon: '🔵' },
+  { value: 'openrouter', label: 'OpenRouter', icon: '🔀' },
 ];
 
 export default function Settings({ showToast }: Props): React.ReactElement {
@@ -96,6 +99,7 @@ export default function Settings({ showToast }: Props): React.ReactElement {
         openai: settings.openaiApiKey,
         anthropic: settings.anthropicApiKey,
         gemini: settings.geminiApiKey,
+        openrouter: settings.openrouterApiKey,
       };
       const key = keyMap[provider];
       if (!key) {
@@ -135,6 +139,7 @@ export default function Settings({ showToast }: Props): React.ReactElement {
       case 'openai': return 'openaiModel';
       case 'anthropic': return 'anthropicModel';
       case 'gemini': return 'geminiModel';
+      case 'openrouter': return 'openrouterModel';
       default: return 'ollamaModel';
     }
   };
@@ -273,11 +278,13 @@ export default function Settings({ showToast }: Props): React.ReactElement {
                   value={
                     selectedProvider === 'openai' ? (settings.openaiApiKey ?? '') :
                     selectedProvider === 'anthropic' ? (settings.anthropicApiKey ?? '') :
+                    selectedProvider === 'openrouter' ? (settings.openrouterApiKey ?? '') :
                     (settings.geminiApiKey ?? '')
                   }
                   onChange={e => {
                     const key = selectedProvider === 'openai' ? 'openaiApiKey' :
-                                selectedProvider === 'anthropic' ? 'anthropicApiKey' : 'geminiApiKey';
+                                selectedProvider === 'anthropic' ? 'anthropicApiKey' :
+                                selectedProvider === 'openrouter' ? 'openrouterApiKey' : 'geminiApiKey';
                     set(key, e.target.value);
                   }}
                   style={{ flex: 1, fontFamily: 'monospace' }}
@@ -311,6 +318,7 @@ export default function Settings({ showToast }: Props): React.ReactElement {
                   selectedProvider === 'ollama' ? 'llama3' :
                   selectedProvider === 'openai' ? 'gpt-4o-mini' :
                   selectedProvider === 'anthropic' ? 'claude-sonnet-4-20250514' :
+                  selectedProvider === 'openrouter' ? 'openai/gpt-4o-mini' :
                   'gemini-2.0-flash'
                 }
                 value={currentModel()}

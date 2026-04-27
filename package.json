@@ -1,6 +1,6 @@
 {
   "name": "ghostfrog",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-native local SEO spider — free Screaming Frog alternative",
   "main": "dist/main/index.js",
   "scripts": {
@@ -15,6 +15,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:report": "playwright show-report",
+    "test:installer": "playwright test --config playwright.installer.config.ts e2e-installer/tests/01-packed-app.spec.ts",
+    "test:installer:full": "playwright test --config playwright.installer.config.ts",
     "electron-rebuild": "electron-rebuild"
   },
   "keywords": [
@@ -32,6 +38,8 @@
     "url": "https://github.com/danishashko/ghostfrog.git"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.13.9",
     "@types/react": "^19.0.10",
@@ -81,7 +89,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "license": "LICENSE"
+      "license": "LICENSE",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico"
     },
     "mac": {
       "target": "dmg",

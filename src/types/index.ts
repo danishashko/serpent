@@ -4,7 +4,7 @@ export type CrawlEngine = 'local' | 'brightdata';
 export type CrawlMode = 'spider' | 'list';
 export type CrawlStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
 export type StorageMode = 'memory' | 'database';
-export type AIProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini';
+export type AIProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'openrouter';
 export type IssueSeverity = 'critical' | 'warning' | 'info' | 'opportunity';
 
 export interface CrawlConfig {
@@ -38,6 +38,10 @@ export interface CrawlConfig {
   extractHreflang?: boolean;
   // Custom CSS selector extraction rules
   customExtractions?: CustomExtractionRule[];
+  // Custom robots.txt body (overrides fetched /robots.txt when respectRobots = true)
+  customRobotsTxt?: string;
+  // User-agent token to match in robots.txt (default: 'GhostFrog')
+  robotsUserAgent?: string;
 }
 
 export type PageStatus = 'ok' | 'redirect' | 'error' | 'pending';
@@ -234,6 +238,8 @@ export interface AppSettings {
   anthropicModel: string;
   geminiApiKey: string | null;
   geminiModel: string;
+  openrouterApiKey: string | null;
+  openrouterModel: string;
   defaultEngine: CrawlEngine;
   defaultStorageMode: StorageMode;
 }
@@ -336,6 +342,49 @@ export interface PerformanceIssue {
   recommendation: string;
 }
 
+// ── Competitor Discovery / Content Gap ──
+
+export interface DiscoverRequest {
+  query: string;
+  intent?: string;
+  country?: string;
+  language?: string;
+  city?: string;
+  numResults?: number;
+  filterKeywords?: string[];
+  includeContent?: boolean;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface DiscoverResult {
+  link: string;
+  title: string;
+  description: string;
+  relevanceScore: number;
+  content: string | null;
+}
+
+export interface DiscoverTaskResponse {
+  status: 'done' | 'processing' | 'error';
+  durationSeconds: number;
+  results: DiscoverResult[];
+}
+
+export interface ContentGap {
+  id: string;
+  crawlId: string;
+  topic: string;
+  hasOwnContent: boolean;
+  ownContentCount: number;
+  competitorCount: number;
+  competitorDomains: string[];
+  topCompetitorUrls: { url: string; title: string; relevanceScore: number }[];
+  avgRelevanceScore: number;
+  gapSeverity: 'high' | 'medium' | 'low' | 'none';
+  analyzedAt: string;
+}
+
 // ── PDF Report Export ──
 
 export interface ReportConfig {
@@ -357,6 +406,122 @@ export type ReportSection =
   | 'structured_data'
   | 'security'
   | 'images';
+
+// ── Bulk / Flexible Export ──
+
+export type ExportFormat = 'csv' | 'json';
+
+export type BulkExportCategory =
+  // Links
+  | 'all_inlinks'
+  | 'all_outlinks'
+  | 'internal_links'
+  | 'external_links'
+  // By status code
+  | 'inlinks_to_3xx'
+  | 'inlinks_to_4xx'
+  | 'inlinks_to_5xx'
+  // Pages
+  | 'all_pages_full'
+  | 'pages_2xx'
+  | 'pages_3xx'
+  | 'pages_4xx'
+  | 'pages_5xx'
+  | 'non_indexable_pages'
+  // Images
+  | 'all_images'
+  | 'images_missing_alt'
+  // Scores
+  | 'geo_scores'
+  | 'perf_scores'
+  // Other
+  | 'redirects'
+  | 'hreflang'
+  | 'duplicates'
+  | 'custom_extractions';
+
+export interface BulkExportRequest {
+  crawlId: string;
+  categories: BulkExportCategory[];
+  format: ExportFormat;
+}
+
+export interface PerUrlExportRequest {
+  crawlId: string;
+  urls: string[];
+  type: 'inlinks' | 'outlinks' | 'images';
+  format: ExportFormat;
+}
+
+// ─── Issues engine ─────────────────────────────────────────────────────────────
+
+export type IssueCategory =
+  | 'page_titles'
+  | 'meta_description'
+  | 'headings'
+  | 'canonicals'
+  | 'directives'
+  | 'response_codes'
+  | 'urls'
+  | 'images'
+  | 'links'
+  | 'security'
+  | 'social'
+  | 'structured_data'
+  | 'content';
+
+export interface IssueDefinition {
+  id: string;            // unique id e.g. "missing_title"
+  category: IssueCategory;
+  severity: IssueSeverity;
+  title: string;         // human label "Missing Title"
+  description: string;   // why it matters (one-liner)
+}
+
+export interface IssueInstance {
+  id: string;            // matches IssueDefinition.id
+  category: IssueCategory;
+  severity: IssueSeverity;
+  title: string;
+  description: string;
+  affectedUrls: string[];
+}
+
+// ─── Sitemap (XML) ─────────────────────────────────────────────────────────────
+
+export interface SitemapAnalysisResult {
+  sitemapUrl: string;
+  fetchedSitemaps: string[];      // expanded sitemap-index children
+  urlsInSitemap: string[];        // unique URLs found in sitemap(s)
+  notInSitemap: string[];         // crawled & indexable URLs NOT in sitemap
+  orphanFromSitemap: string[];    // URLs in sitemap but never crawled
+  nonIndexableInSitemap: string[];// URLs in sitemap that are noindex/canonicalised/4xx/5xx
+  duplicateInSitemap: string[];   // URLs appearing in 2+ sitemaps
+  errors: string[];               // fetch/parse errors
+}
+
+export interface SitemapGenerateOptions {
+  crawlId: string;
+  origin: string;                 // base URL (e.g. https://example.com)
+  includeNonCanonical?: boolean;  // default false — exclude canonicalised pages
+  defaultChangefreq?: 'always' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never';
+  defaultPriority?: number;       // 0.0–1.0
+}
+
+// ─── Robots.txt tester ─────────────────────────────────────────────────────────
+
+export interface RobotsTestRequest {
+  robotsTxt: string;              // raw robots.txt body
+  url: string;                    // URL to test
+  userAgent?: string;             // default '*'
+}
+
+export interface RobotsTestResult {
+  allowed: boolean;
+  matchedRule: string | null;     // e.g. "Disallow: /admin"
+  ruleType: 'allow' | 'disallow' | 'none';
+  appliedAgent: string;           // which user-agent block matched
+}
 
 // IPC channel names
 export const IPC = {
@@ -390,6 +555,7 @@ export const IPC = {
 
   // AI
   AI_ANALYZE: 'ai:analyze',
+  AI_ANALYZE_PAGE: 'ai:analyze-page',
   AI_ANALYZE_PROGRESS: 'ai:analyze-progress',
   AI_GET_RESULTS: 'ai:get-results',
   AI_ANALYZE_ISSUES: 'ai:analyze-issues',
@@ -426,4 +592,21 @@ export const IPC = {
 
   // Report
   REPORT_GENERATE_PDF: 'report:generate-pdf',
+
+  // Bulk / Flexible Export
+  EXPORT_BULK: 'export:bulk',
+  EXPORT_PER_URL: 'export:per-url',
+
+  // Discover (Competitor Discovery + Content Gap)
+  DISCOVER_COMPETITORS: 'discover:competitors',
+  DISCOVER_CONTENT_GAPS: 'discover:content-gaps',
+  DISCOVER_GET_RESULTS: 'discover:get-results',
+  DISCOVER_GET_GAPS: 'discover:get-gaps',
+
+  // Sitemap (XML generation + analysis)
+  SITEMAP_GENERATE: 'sitemap:generate',
+  SITEMAP_ANALYZE: 'sitemap:analyze',
+
+  // Robots.txt tester
+  ROBOTS_TEST: 'robots:test',
 } as const;

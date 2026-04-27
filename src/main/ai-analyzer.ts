@@ -139,6 +139,31 @@ export async function listGeminiModels(apiKey: string): Promise<string[]> {
   }
 }
 
+export async function testOpenRouterConnection(apiKey: string): Promise<boolean> {
+  try {
+    const response = await axios.get('https://openrouter.ai/api/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeout: 10000,
+    });
+    return response.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+export async function listOpenRouterModels(apiKey: string): Promise<string[]> {
+  try {
+    const response = await axios.get('https://openrouter.ai/api/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeout: 10000,
+    });
+    const models = (response.data?.data || []) as { id: string }[];
+    return models.map(m => m.id).sort();
+  } catch {
+    return [];
+  }
+}
+
 /** Test any AI provider's connection */
 export async function testAIProviderConnection(
   provider: AIProvider,
@@ -169,6 +194,12 @@ export async function testAIProviderConnection(
       const models = ok ? await listGeminiModels(config.apiKey) : [];
       return { success: ok, models };
     }
+    case 'openrouter': {
+      if (!config.apiKey) return { success: false };
+      const ok = await testOpenRouterConnection(config.apiKey);
+      const models = ok ? await listOpenRouterModels(config.apiKey) : [];
+      return { success: ok, models };
+    }
   }
 }
 
@@ -184,6 +215,8 @@ async function generateCompletion(prompt: string, config: AIProviderConfig): Pro
       return anthropicGenerate(prompt, config.model, config.apiKey!);
     case 'gemini':
       return geminiGenerate(prompt, config.model, config.apiKey!);
+    case 'openrouter':
+      return openrouterGenerate(prompt, config.model, config.apiKey!);
   }
 }
 
@@ -260,6 +293,31 @@ async function geminiGenerate(prompt: string, model: string, apiKey: string): Pr
   );
   const data = response.data as { candidates: { content: { parts: { text: string }[] } }[] };
   return data.candidates[0].content.parts[0].text;
+}
+
+async function openrouterGenerate(prompt: string, model: string, apiKey: string): Promise<string> {
+  const response = await axios.post(
+    'https://openrouter.ai/api/v1/chat/completions',
+    {
+      model,
+      messages: [
+        { role: 'system', content: 'You are an SEO expert. Respond only with valid JSON.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 512,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://ghostfrog.app',
+        'X-Title': 'GhostFrog SEO Spider',
+        'Content-Type': 'application/json',
+      },
+      timeout: 60000,
+    }
+  );
+  return (response.data as { choices: { message: { content: string } }[] }).choices[0].message.content;
 }
 
 // ─── SEO Analysis Functions ────────────────────────────────────────────────────
