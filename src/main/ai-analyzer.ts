@@ -310,8 +310,8 @@ async function openrouterGenerate(prompt: string, model: string, apiKey: string)
     {
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://ghostfrog.app',
-        'X-Title': 'GhostFrog SEO Spider',
+        'HTTP-Referer': 'https://serpent.app',
+        'X-Title': 'Serpent SEO Spider',
         'Content-Type': 'application/json',
       },
       timeout: 60000,

@@ -190,7 +190,7 @@ export async function crawlPageLocal(
           timeout: config.timeout || 10000,
           maxRedirects: 0,
           headers: {
-            'User-Agent': 'GhostFrog/1.0 (SEO Crawler; +https://github.com/ghostfrog)',
+            'User-Agent': 'Serpent/1.0 (SEO Crawler; +https://github.com/danishashko/serpent)',
             'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
           },

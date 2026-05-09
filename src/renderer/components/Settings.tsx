@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppSettings, AIProvider } from '../../types/index';
+import { AppSettings, AIProvider, LicenseInfo, CrawlUsage, FREE_TIER_LIMIT } from '../../types/index';
 
 interface Props {
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
@@ -45,6 +45,11 @@ export default function Settings({ showToast }: Props): React.ReactElement {
   const [showBdKey, setShowBdKey] = useState(false);
   const [showAiKey, setShowAiKey] = useState(false);
 
+  // License state
+  const [licenseInfo, setLicenseInfo] = useState<(LicenseInfo & CrawlUsage) | null>(null);
+  const [licenseKey, setLicenseKey] = useState('');
+  const [licenseLoading, setLicenseLoading] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
@@ -55,6 +60,10 @@ export default function Settings({ showToast }: Props): React.ReactElement {
       } finally {
         setLoading(false);
       }
+      try {
+        const info = await window.api.licenseGet();
+        setLicenseInfo(info as LicenseInfo & CrawlUsage);
+      } catch { /* ignore */ }
     })();
   }, []);
 
@@ -146,6 +155,37 @@ export default function Settings({ showToast }: Props): React.ReactElement {
 
   const currentModel = (): string => {
     return (settings[modelFieldKey()] as string) ?? '';
+  };
+
+  const handleActivateLicense = async () => {
+    const key = licenseKey.trim();
+    if (!key) { showToast('Enter a license key', 'error'); return; }
+    setLicenseLoading(true);
+    try {
+      const result = await window.api.licenseActivate(key);
+      if (result.success) {
+        showToast('License activated!', 'success');
+        setLicenseKey('');
+        const info = await window.api.licenseGet();
+        setLicenseInfo(info as LicenseInfo & CrawlUsage);
+      } else {
+        showToast(result.error ?? 'Activation failed', 'error');
+      }
+    } finally {
+      setLicenseLoading(false);
+    }
+  };
+
+  const handleDeactivateLicense = async () => {
+    setLicenseLoading(true);
+    try {
+      await window.api.licenseDeactivate();
+      showToast('License removed', 'info');
+      const info = await window.api.licenseGet();
+      setLicenseInfo(info as LicenseInfo & CrawlUsage);
+    } finally {
+      setLicenseLoading(false);
+    }
   };
 
   if (loading) return (
@@ -342,6 +382,97 @@ export default function Settings({ showToast }: Props): React.ReactElement {
             {testingAI ? <><span className="spinner" /> Testing…</> : `🔌 Test ${AI_PROVIDERS.find(p => p.value === selectedProvider)?.label}`}
           </button>
         </div>
+      </section>
+
+      {/* ── License ───────────────────────────────────────────────────── */}
+      <section className="settings-section">
+        <h3>License</h3>
+        {licenseInfo && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <span style={{
+                padding: '3px 10px',
+                borderRadius: 12,
+                fontSize: 12,
+                fontWeight: 600,
+                background: licenseInfo.tier === 'free' ? '#3b82f620' : '#22c55e20',
+                color: licenseInfo.tier === 'free' ? '#60a5fa' : '#4ade80',
+                border: `1px solid ${licenseInfo.tier === 'free' ? '#3b82f640' : '#22c55e40'}`,
+              }}>
+                {licenseInfo.tier === 'free' ? '🔵 Free Plan' : licenseInfo.tier === 'lifetime' ? '⭐ Lifetime Pro' : '🟢 Pro'}
+              </span>
+            </div>
+
+            {licenseInfo.tier === 'free' && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>
+                  <span>URLs crawled</span>
+                  <span>{licenseInfo.totalCrawled.toLocaleString()} / {FREE_TIER_LIMIT.toLocaleString()}</span>
+                </div>
+                <div style={{ background: '#1e293b', borderRadius: 6, height: 6, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%',
+                    borderRadius: 6,
+                    width: `${Math.min(100, (licenseInfo.totalCrawled / FREE_TIER_LIMIT) * 100)}%`,
+                    background: licenseInfo.atLimit ? '#ef4444' : licenseInfo.atWarning ? '#f59e0b' : '#3b82f6',
+                    transition: 'width 0.3s',
+                  }} />
+                </div>
+                {licenseInfo.atLimit && (
+                  <p style={{ color: '#ef4444', fontSize: 12, marginTop: 6 }}>
+                    Free tier limit reached. Activate a Pro license to continue crawling.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {licenseInfo.tier !== 'free' ? (
+              <button
+                className="btn-secondary"
+                onClick={handleDeactivateLicense}
+                disabled={licenseLoading}
+                style={{ marginTop: 4 }}
+              >
+                {licenseLoading ? 'Working…' : '🗑 Remove License'}
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <label className="settings-label">License Key</label>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    placeholder="XXXX-XXXX-XXXX-XXXX"
+                    value={licenseKey}
+                    onChange={e => setLicenseKey(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleActivateLicense()}
+                  />
+                </div>
+                <button
+                  className="btn-primary"
+                  onClick={handleActivateLicense}
+                  disabled={licenseLoading || !licenseKey.trim()}
+                >
+                  {licenseLoading ? 'Activating…' : '✅ Activate'}
+                </button>
+              </div>
+            )}
+
+            {licenseInfo.tier === 'free' && (
+              <p style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
+                Don't have a key?{' '}
+                <a
+                  href="https://serpent.app/pricing"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#3b82f6' }}
+                >
+                  Get Pro — from $4.99/mo →
+                </a>
+              </p>
+            )}
+          </>
+        )}
       </section>
 
       <button

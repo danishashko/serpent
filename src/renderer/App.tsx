@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CrawlConfig from './components/CrawlConfig';
 import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions } from '../types/index';
+import LicenseGate from './components/LicenseGate';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlUsage } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -25,7 +26,7 @@ interface Toast {
 declare global {
   interface Window {
     api: {
-      crawlStart: (config: unknown) => Promise<{ success: boolean; crawlId?: string; error?: string }>;
+      crawlStart: (config: unknown) => Promise<{ success: boolean; crawlId?: string; error?: string; requiresUpgrade?: boolean }>;
       crawlPause: () => Promise<void>;
       crawlResume: () => Promise<void>;
       crawlStop: () => Promise<void>;
@@ -78,6 +79,10 @@ declare global {
       testRobots: (req: RobotsTestRequest) => Promise<RobotsTestResult>;
       generateSitemap: (opts: SitemapGenerateOptions) => Promise<{ ok: boolean; canceled?: boolean; totalUrls?: number; files?: { filename: string; urlCount: number }[]; written?: string[]; error?: string }>;
       analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) => Promise<SitemapAnalysisResult>;
+      licenseGet: () => Promise<unknown>;
+      licenseActivate: (key: string) => Promise<{ success: boolean; error?: string }>;
+      licenseDeactivate: () => Promise<{ success: boolean }>;
+      crawlGetUsage: () => Promise<CrawlUsage>;
     };
   }
 }
@@ -103,6 +108,8 @@ export default function App(): React.ReactElement {
   const [perfScores, setPerfScores] = useState<PerformanceScore[]>([]);
   const [discoverResults, setDiscoverResults] = useState<DiscoverResult[]>([]);
   const [contentGaps, setContentGaps] = useState<ContentGap[]>([]);
+  const [licenseGateMode, setLicenseGateMode] = useState<'warn' | 'hard' | null>(null);
+  const warnShownRef = useRef(false);
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = toastCounter + 1;
@@ -111,23 +118,35 @@ export default function App(): React.ReactElement {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4000);
   }, [toastCounter]);
 
+  const loadInFlightRef = React.useRef(false);
+  const lastLoadAtRef = React.useRef(0);
+  const livePreviewPausedRef = React.useRef(false);
+  const livePreviewWarnedRef = React.useRef(false);
+
   const loadCrawlData = useCallback(async (crawlId: string) => {
-    const [p, l, i, r, h, d, ce] = await Promise.all([
-      window.api.getPages(crawlId),
-      window.api.getLinks(crawlId),
-      window.api.getImages(crawlId),
-      window.api.getRedirects(crawlId),
-      window.api.getHreflang(crawlId),
-      window.api.getDuplicates(crawlId),
-      window.api.getCustomExtracts(crawlId),
-    ]);
-    setPages(p);
-    setLinks(l);
-    setImages(i);
-    setRedirects(r);
-    setHreflang(h);
-    setDuplicates(d);
-    setCustomExtracts(ce);
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+    try {
+      const [p, l, i, r, h, d, ce] = await Promise.all([
+        window.api.getPages(crawlId),
+        window.api.getLinks(crawlId),
+        window.api.getImages(crawlId),
+        window.api.getRedirects(crawlId),
+        window.api.getHreflang(crawlId),
+        window.api.getDuplicates(crawlId),
+        window.api.getCustomExtracts(crawlId),
+      ]);
+      setPages(p);
+      setLinks(l);
+      setImages(i);
+      setRedirects(r);
+      setHreflang(h);
+      setDuplicates(d);
+      setCustomExtracts(ce);
+      lastLoadAtRef.current = Date.now();
+    } finally {
+      loadInFlightRef.current = false;
+    }
     // Load SERP results (non-blocking)
     window.api.serpGetResults(crawlId).then(results => {
       setSerpResults(results as SerpResultRow[]);
@@ -144,10 +163,22 @@ export default function App(): React.ReactElement {
     window.api.onCrawlProgress((p) => {
       const prog = p as CrawlProgress;
       setProgress(prog);
-      // Refresh data periodically during crawl
-      if (prog.completed % 20 === 0 && prog.crawlId) {
-        loadCrawlData(prog.crawlId);
+      // Skip live data refresh once dataset gets huge — IPC payloads + table re-render lock the UI.
+      // Once paused, stays paused for the rest of this crawl; final reload happens on 'crawl:complete'.
+      if (livePreviewPausedRef.current) return;
+      if (prog.completed >= 3000) {
+        livePreviewPausedRef.current = true;
+        if (!livePreviewWarnedRef.current) {
+          livePreviewWarnedRef.current = true;
+          showToast('Live preview paused — large crawl detected. Results will load when crawl completes.', 'info');
+        }
+        return;
       }
+      // Time-based throttle: at most one refresh every 8s, and never overlap an in-flight load.
+      if (!prog.crawlId) return;
+      if (loadInFlightRef.current) return;
+      if (Date.now() - lastLoadAtRef.current < 8000) return;
+      loadCrawlData(prog.crawlId);
     });
 
     window.api.onCrawlError((msg) => {
@@ -156,8 +187,20 @@ export default function App(): React.ReactElement {
 
     window.api.onCrawlComplete((crawlId) => {
       setActiveCrawlId(crawlId);
+      // Crawl is done — safe to load full dataset, even if it's big.
+      livePreviewPausedRef.current = false;
+      livePreviewWarnedRef.current = false;
       loadCrawlData(crawlId);
       showToast('Crawl completed!', 'success');
+      // Re-check free tier usage after each crawl
+      window.api.crawlGetUsage().then(usage => {
+        if (usage.atLimit) {
+          setLicenseGateMode('hard');
+        } else if (!warnShownRef.current && usage.atWarning) {
+          warnShownRef.current = true;
+          setLicenseGateMode('warn');
+        }
+      }).catch(() => {});
     });
 
     window.api.onCostLimit((data) => {
@@ -183,6 +226,13 @@ export default function App(): React.ReactElement {
         setResumePrompt({ id: incomplete.id, startUrl: incomplete.startUrl, completedUrls: incomplete.completedUrls });
       }
     });
+    // Check license / free tier usage on mount
+    window.api.crawlGetUsage().then(usage => {
+      if (!warnShownRef.current && usage.atWarning && !usage.atLimit) {
+        warnShownRef.current = true;
+        setLicenseGateMode('warn');
+      }
+    }).catch(() => {});
   }, []);
 
   const handleResumeCrawl = async () => {
@@ -199,6 +249,9 @@ export default function App(): React.ReactElement {
 
   const handleCrawlStart = async (crawlId: string) => {
     setActiveCrawlId(crawlId);
+    livePreviewPausedRef.current = false;
+    livePreviewWarnedRef.current = false;
+    lastLoadAtRef.current = 0;
     setPages([]);
     setLinks([]);
     setImages([]);
@@ -247,7 +300,7 @@ export default function App(): React.ReactElement {
         flexShrink: 0,
       }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-green)', WebkitAppRegion: 'no-drag' }}>
-          🐸 GhostFrog
+          � Serpent
         </span>
         <nav style={{ display: 'flex', gap: 4, WebkitAppRegion: 'no-drag' }}>
           {(['crawl', 'settings'] as View[]).map(v => (
@@ -289,6 +342,7 @@ export default function App(): React.ReactElement {
                 progress={progress}
                 onCrawlStart={handleCrawlStart}
                 showToast={showToast}
+                onUpgradeRequired={() => setLicenseGateMode('hard')}
               />
               {progress && progress.totalSpendUsd > 0 && (
                 <CostMonitor progress={progress} />
@@ -395,6 +449,17 @@ export default function App(): React.ReactElement {
             </div>
           </div>
         </div>
+      )}
+
+      {/* License Gate */}
+      {licenseGateMode !== null && (
+        <LicenseGate
+          mode={licenseGateMode}
+          totalCrawled={0}
+          onClose={licenseGateMode === 'warn' ? () => setLicenseGateMode(null) : undefined}
+          onActivated={() => { setLicenseGateMode(null); warnShownRef.current = false; }}
+          showToast={showToast}
+        />
       )}
 
       {/* Toasts */}

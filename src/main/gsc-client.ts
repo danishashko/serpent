@@ -4,7 +4,7 @@ import { URL } from 'url';
 import keytar from 'keytar';
 import type { GSCRow, GSCData } from '../types';
 
-const SERVICE_NAME = 'ghostfrog-gsc';
+const SERVICE_NAME = 'serpent-gsc';
 const ACCOUNT_NAME = 'oauth-tokens';
 
 // Users must provide their own Google OAuth client ID/secret via config

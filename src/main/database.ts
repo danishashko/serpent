@@ -10,7 +10,7 @@ export function getDb(): Database.Database {
 }
 
 export function initDatabase(dataPath?: string): Database.Database {
-  const dbPath = dataPath || path.join(app.getPath('userData'), 'ghostfrog.db');
+  const dbPath = dataPath || path.join(app.getPath('userData'), 'serpent.db');
   db = new Database(dbPath);
 
   // Enable WAL mode for concurrent reads + faster writes
@@ -321,7 +321,7 @@ export function getLatestIncompleteCrawl(): CrawlRecord | undefined {
   // at app start means the previous session crashed/was killed — those are marked
   // 'interrupted' by markRunningCrawlsAsInterrupted() during startup and won't appear here.
   return db.prepare(
-    CRAWL_SELECT + " WHERE status = 'paused' ORDER BY start_time DESC LIMIT 1"
+    CRAWL_SELECT + " WHERE status IN ('paused', 'interrupted') ORDER BY start_time DESC LIMIT 1"
   ).get() as CrawlRecord | undefined;
 }
 

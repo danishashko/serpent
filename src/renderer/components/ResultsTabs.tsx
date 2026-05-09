@@ -166,6 +166,11 @@ const severityColor = (severity: IssueSeverity): string => {
   }
 };
 
+// Max rows we'll render in any single table. Beyond this the DOM (22 cols × N rows)
+// becomes too heavy and the UI stops responding. Users can search/filter to narrow
+// the set, or export to CSV for the full data.
+const MAX_RENDER_ROWS = 1000;
+
 export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, geoScores, perfScores, crawlId, showToast, onSerpQuery, serpLoading, onGeoScoresUpdate, onPerfScoresUpdate, discoverResults, contentGaps, onDiscoverResultsUpdate, onContentGapsUpdate }: Props): React.ReactElement {
   const [tab, setTab] = useState<Tab>('pages');
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
@@ -239,6 +244,20 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     }
     return m;
   }, [links]);
+
+  // O(1) lookups — replaces per-row geoScores.find()/perfScores.find() in the pages table
+  // (those were O(n²) and made the table unscrollable past a few thousand pages).
+  const geoScoreMap = useMemo(() => {
+    const m = new Map<string, GEOScore>();
+    for (const g of geoScores) m.set(g.pageId, g);
+    return m;
+  }, [geoScores]);
+
+  const perfScoreMap = useMemo(() => {
+    const m = new Map<string, PerformanceScore>();
+    for (const p of perfScores) m.set(p.pageId, p);
+    return m;
+  }, [perfScores]);
 
   const filteredPages = useMemo(() => {
     let list = [...pages];
@@ -411,7 +430,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   };
 
   const getExportData = (ext: string): { rows: Record<string, unknown>[]; filename: string } => {
-    const prefix = `ghostfrog-${crawlId}`;
+    const prefix = `serpent-${crawlId}`;
     if (tab === 'pages' || tab === 'issues') {
       return {
         rows: filteredPages.map(p => ({
@@ -820,7 +839,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <tr><td colSpan={22} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
                   {pages.length === 0 ? 'Start a crawl to see results' : 'No results match filter'}
                 </td></tr>
-              ) : filteredPages.map(p => {
+              ) : filteredPages.slice(0, MAX_RENDER_ROWS).map(p => {
                 const inlinks = inlinkMap.get(p.url) ?? [];
                 const isExpanded = expandedInlinks === p.url;
                 return (
@@ -879,8 +898,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   </td>
                   <td style={{ fontVariantNumeric: 'tabular-nums' }}>{p.responseTimeMs ?? '—'}</td>
                   <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (p.linkScore ?? 0) >= 50 ? 'var(--accent-green)' : 'var(--text-muted)' }}>{p.linkScore?.toFixed(1) ?? '—'}</td>
-                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (() => { const g = geoScores.find(s => s.pageId === p.id); if (!g) return 'var(--text-muted)'; return g.overallScore >= 70 ? 'var(--accent-green)' : g.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'; })() }}>{geoScores.find(s => s.pageId === p.id)?.overallScore?.toFixed(0) ?? '—'}</td>
-                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (() => { const pf = perfScores.find(s => s.pageId === p.id); if (!pf) return 'var(--text-muted)'; return pf.overallScore >= 70 ? 'var(--accent-green)' : pf.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'; })() }}>{perfScores.find(s => s.pageId === p.id)?.overallScore?.toFixed(0) ?? '—'}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (() => { const g = geoScoreMap.get(p.id); if (!g) return 'var(--text-muted)'; return g.overallScore >= 70 ? 'var(--accent-green)' : g.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'; })() }}>{geoScoreMap.get(p.id)?.overallScore?.toFixed(0) ?? '—'}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (() => { const pf = perfScoreMap.get(p.id); if (!pf) return 'var(--text-muted)'; return pf.overallScore >= 70 ? 'var(--accent-green)' : pf.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'; })() }}>{perfScoreMap.get(p.id)?.overallScore?.toFixed(0) ?? '—'}</td>
                   <td>
                     {inlinks.length > 0 ? (
                       <span
@@ -947,6 +966,13 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 </React.Fragment>
                 );
               })}
+              {filteredPages.length > MAX_RENDER_ROWS && (
+                <tr>
+                  <td colSpan={22} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary, rgba(0,0,0,0.04))' }}>
+                    Showing first {MAX_RENDER_ROWS.toLocaleString()} of {filteredPages.length.toLocaleString()} rows. Use search to narrow, or Export to get the full dataset.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         )}
@@ -975,7 +1001,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             <tbody>
               {links.length === 0 ? (
                 <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No links collected yet</td></tr>
-              ) : links.filter(l => !search || l.sourceUrl.toLowerCase().includes(search.toLowerCase()) || l.targetUrl.toLowerCase().includes(search.toLowerCase())).map((l, i) => (
+              ) : (() => {
+                const filteredLinks = links.filter(l => !search || l.sourceUrl.toLowerCase().includes(search.toLowerCase()) || l.targetUrl.toLowerCase().includes(search.toLowerCase()));
+                const capped = filteredLinks.slice(0, MAX_RENDER_ROWS);
+                return (<>{capped.map((l, i) => (
                 <tr key={i}>
                   <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <a href={l.sourceUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{l.sourceUrl}</a>
@@ -999,7 +1028,12 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                     {l.relAttr?.includes('nofollow') ? 'nofollow' : ''}
                   </td>
                 </tr>
-              ))}
+              ))}{filteredLinks.length > MAX_RENDER_ROWS && (
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary, rgba(0,0,0,0.04))' }}>
+                  Showing first {MAX_RENDER_ROWS.toLocaleString()} of {filteredLinks.length.toLocaleString()} rows. Use search to narrow, or Export to get the full dataset.
+                </td></tr>
+              )}</>);
+              })()}
             </tbody>
           </table>
         )}
@@ -1020,7 +1054,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             <tbody>
               {images.length === 0 ? (
                 <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No images collected yet</td></tr>
-              ) : images.filter(img => !search || img.imageUrl.toLowerCase().includes(search.toLowerCase())).map((img, i) => (
+              ) : (() => {
+                const filteredImages = images.filter(img => !search || img.imageUrl.toLowerCase().includes(search.toLowerCase()));
+                const capped = filteredImages.slice(0, MAX_RENDER_ROWS);
+                return (<>{capped.map((img, i) => (
                 <tr key={i}>
                   <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <a href={img.imageUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{img.imageUrl}</a>
@@ -1036,7 +1073,12 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                     {img.pageUrl}
                   </td>
                 </tr>
-              ))}
+              ))}{filteredImages.length > MAX_RENDER_ROWS && (
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary, rgba(0,0,0,0.04))' }}>
+                  Showing first {MAX_RENDER_ROWS.toLocaleString()} of {filteredImages.length.toLocaleString()} rows. Use search to narrow, or Export to get the full dataset.
+                </td></tr>
+              )}</>);
+              })()}
             </tbody>
           </table>
         )}

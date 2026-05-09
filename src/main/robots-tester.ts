@@ -17,7 +17,7 @@ export interface RobotsRule {
 }
 
 export interface RobotsRuleSet {
-  agent: string;            // 'GhostFrog' | '*' | …
+  agent: string;            // 'Serpent' | '*' | …
   rules: RobotsRule[];
 }
 

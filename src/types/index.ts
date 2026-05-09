@@ -40,7 +40,7 @@ export interface CrawlConfig {
   customExtractions?: CustomExtractionRule[];
   // Custom robots.txt body (overrides fetched /robots.txt when respectRobots = true)
   customRobotsTxt?: string;
-  // User-agent token to match in robots.txt (default: 'GhostFrog')
+  // User-agent token to match in robots.txt (default: 'Serpent')
   robotsUserAgent?: string;
 }
 
@@ -609,4 +609,29 @@ export const IPC = {
 
   // Robots.txt tester
   ROBOTS_TEST: 'robots:test',
+
+  // License / Monetization
+  LICENSE_GET: 'license:get',
+  LICENSE_ACTIVATE: 'license:activate',
+  LICENSE_DEACTIVATE: 'license:deactivate',
+  CRAWL_GET_USAGE: 'crawl:get-usage',
 } as const;
+
+// License / Monetization types
+export type LicenseTier = 'free' | 'pro' | 'lifetime';
+
+export interface LicenseInfo {
+  tier: LicenseTier;
+  valid: boolean;
+  key: string | null;
+}
+
+export interface CrawlUsage {
+  totalCrawled: number;
+  remaining: number;
+  atWarning: boolean;
+  atLimit: boolean;
+}
+
+export const FREE_TIER_LIMIT = 1000;
+export const FREE_TIER_WARN = 800;

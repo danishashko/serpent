@@ -9,13 +9,13 @@ describe('robots-tester', () => {
     });
 
     it('$ end-anchor matches exact suffix', () => {
-      const rs = parseRobotsTxt('User-agent: *\nDisallow: /*.pdf$', 'GhostFrog');
+      const rs = parseRobotsTxt('User-agent: *\nDisallow: /*.pdf$', 'Serpent');
       expect(checkPath('/file.pdf', rs).allowed).toBe(false);
       expect(checkPath('/file.pdfx', rs).allowed).toBe(true);
     });
 
     it('allow beats disallow on tie (same specificity)', () => {
-      const rs = parseRobotsTxt('User-agent: *\nDisallow: /admin\nAllow: /admin', 'GhostFrog');
+      const rs = parseRobotsTxt('User-agent: *\nDisallow: /admin\nAllow: /admin', 'Serpent');
       expect(checkPath('/admin', rs).allowed).toBe(true);
     });
 
@@ -60,7 +60,7 @@ describe('robots-tester', () => {
     });
 
     it('longest-pattern wins', () => {
-      const rs = parseRobotsTxt('User-agent: *\nDisallow: /a\nAllow: /a/public', 'GhostFrog');
+      const rs = parseRobotsTxt('User-agent: *\nDisallow: /a\nAllow: /a/public', 'Serpent');
       expect(checkPath('/a/private', rs).allowed).toBe(false);
       expect(checkPath('/a/public/x', rs).allowed).toBe(true);
     });
@@ -89,7 +89,7 @@ describe('robots-tester', () => {
       const r = testRobots({
         robotsTxt: 'User-agent: *\nDisallow: /admin',
         url: 'https://example.com/admin/dashboard',
-        userAgent: 'GhostFrog',
+        userAgent: 'Serpent',
       });
       expect(r.allowed).toBe(false);
       expect(r.ruleType).toBe('disallow');

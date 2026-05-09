@@ -5,6 +5,7 @@ interface Props {
   progress: CrawlProgress | null;
   onCrawlStart: (crawlId: string) => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
+  onUpgradeRequired?: () => void;
 }
 
 type CrawlMode = 'spider' | 'list';
@@ -32,7 +33,7 @@ const defaultConfig: CrawlConfigType = {
   bdZone: 'web_unlocker1',
 };
 
-export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props): React.ReactElement {
+export default function CrawlConfig({ progress, onCrawlStart, showToast, onUpgradeRequired }: Props): React.ReactElement {
   const [config, setConfig] = useState<CrawlConfigType>(defaultConfig);
   const [listUrls, setListUrls] = useState('');
   const [isRunning, setIsRunning] = useState(false);
@@ -78,6 +79,8 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
       if (result.success && result.crawlId) {
         onCrawlStart(result.crawlId);
         setIsRunning(true);
+      } else if (result.requiresUpgrade) {
+        onUpgradeRequired?.();
       } else {
         showToast(result.error ?? 'Failed to start crawl', 'error');
       }
@@ -284,7 +287,7 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
       {config.respectRobots && (
         <CustomRobotsSection
           customRobotsTxt={config.customRobotsTxt ?? ''}
-          robotsUserAgent={config.robotsUserAgent ?? 'GhostFrog'}
+          robotsUserAgent={config.robotsUserAgent ?? 'Serpent'}
           startUrl={config.startUrl}
           busy={busy}
           onChangeBody={(v) => set('customRobotsTxt', v as CrawlConfigType['customRobotsTxt'])}
@@ -408,7 +411,7 @@ interface CustomRobotsProps {
   onChangeUserAgent: (v: string) => void;
 }
 
-const COMMON_AGENTS = ['GhostFrog', '*', 'Googlebot', 'Googlebot-Mobile', 'Bingbot', 'GPTBot', 'ClaudeBot', 'PerplexityBot'];
+const COMMON_AGENTS = ['Serpent', '*', 'Googlebot', 'Googlebot-Mobile', 'Bingbot', 'GPTBot', 'ClaudeBot', 'PerplexityBot'];
 
 function CustomRobotsSection(props: CustomRobotsProps): React.ReactElement {
   const { customRobotsTxt, robotsUserAgent, startUrl, busy, onChangeBody, onChangeUserAgent } = props;

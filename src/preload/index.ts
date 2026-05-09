@@ -117,4 +117,10 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke(IPC.SITEMAP_GENERATE, opts),
   analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) =>
     ipcRenderer.invoke(IPC.SITEMAP_ANALYZE, payload),
+
+  // License / Monetization
+  licenseGet: () => ipcRenderer.invoke(IPC.LICENSE_GET),
+  licenseActivate: (key: string) => ipcRenderer.invoke(IPC.LICENSE_ACTIVATE, key),
+  licenseDeactivate: () => ipcRenderer.invoke(IPC.LICENSE_DEACTIVATE),
+  crawlGetUsage: () => ipcRenderer.invoke(IPC.CRAWL_GET_USAGE),
 });

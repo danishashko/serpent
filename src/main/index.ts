@@ -14,15 +14,47 @@ import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, 
 import { generateSitemap as buildSitemap } from './sitemap-generator';
 import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
+import { initCrawlCounter, addCrawledUrls, getCrawlUsage, FREE_TIER_LIMIT } from './crawl-counter';
+import { getLicense, activateLicense, deactivateLicense } from './license-manager';
 import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions } from '../types/index';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
 
-const KEYTAR_SERVICE = 'ghostfrog';
+const KEYTAR_SERVICE = 'serpent';
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
 const orchestrator = new CrawlOrchestrator();
+
+// ─── URL / SSRF Safety Helpers ────────────────────────────────────────────────
+
+/** Matches RFC-1918, loopback, link-local, and cloud-metadata hostnames. */
+const INTERNAL_HOST_RE =
+  /^(localhost|0\.0\.0\.0|::1|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|169\.254\.\d+\.\d+|metadata\.google\.internal)$/i;
+
+/** Returns true only for public http/https URLs (blocks SSRF to internal networks). */
+function isSafeExternalUrl(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase().replace(/\.$/, '');
+    return !INTERNAL_HOST_RE.test(host);
+  } catch {
+    return false;
+  }
+}
+
+/** Returns true only for local http/https URLs — Ollama must run on localhost. */
+function isSafeLocalUrl(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase().replace(/\.$/, '');
+    return host === 'localhost' || /^127\.\d+\.\d+\.\d+$/.test(host) || host === '::1';
+  } catch {
+    return false;
+  }
+}
 
 // ─── Window ───────────────────────────────────────────────────────────────────
 
@@ -81,7 +113,13 @@ function createWindow(): void {
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    // Only open http/https external links — prevents arbitrary-protocol RCE.
+    try {
+      const u = new URL(url);
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        shell.openExternal(url);
+      }
+    } catch { /* ignore malformed URLs */ }
     return { action: 'deny' };
   });
 
@@ -95,6 +133,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   console.log('[MAIN] app ready — initializing DB');
   initDatabase();
+  initCrawlCounter(app.getPath('userData'));
   // Clear stale state from previous sessions that crashed mid-crawl.
   const interrupted = markRunningCrawlsAsInterrupted();
   if (interrupted > 0) {
@@ -132,6 +171,9 @@ orchestrator.on('error', (err: Error) => {
 });
 
 orchestrator.on('complete', (crawlId: string) => {
+  // Track URLs consumed against the free tier counter
+  const count = orchestrator.getCompletedCount();
+  addCrawledUrls(count);
   calculateLinkScores(crawlId);
   mainWindow?.webContents.send(IPC.CRAWL_COMPLETE, crawlId);
 });
@@ -142,6 +184,24 @@ orchestrator.on('cost-limit-warning', (data: { currentSpend: number; limit: numb
 
 ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
   try {
+    if (!isSafeExternalUrl(config.startUrl)) {
+      return { success: false, error: 'Invalid start URL. Must be a public http/https address.' };
+    }
+
+    // ── Free tier gate ─────────────────────────────────────────────────────
+    const license = await getLicense();
+    if (license.tier === 'free') {
+      const usage = getCrawlUsage();
+      if (usage.totalCrawled >= FREE_TIER_LIMIT) {
+        return {
+          success: false,
+          error: `Free tier limit reached (${usage.totalCrawled.toLocaleString()} / ${FREE_TIER_LIMIT.toLocaleString()} URLs). Activate a Pro license to keep crawling.`,
+          requiresUpgrade: true,
+        };
+      }
+    }
+    // ──────────────────────────────────────────────────────────────────────
+
     let apiKey: string | null = null;
     let bdZone: string | null = null;
 
@@ -384,6 +444,9 @@ ipcMain.handle(IPC.SETTINGS_TEST_BD, async (_event, apiKey: string, zone: string
 });
 
 ipcMain.handle(IPC.SETTINGS_TEST_OLLAMA, async (_event, url: string) => {
+  if (!isSafeLocalUrl(url)) {
+    return { success: false, models: [], error: 'Ollama URL must be a local address (http://localhost:...).' };
+  }
   const ok = await testOllamaConnection(url);
   const models = ok ? await listOllamaModels(url) : [];
   return { success: ok, models };
@@ -683,10 +746,12 @@ function buildCsvString(rows: Record<string, unknown>[]): string {
       const val = row[k];
       if (val === null || val === undefined) return '';
       const str = String(val);
-      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-        return `"${str.replace(/"/g, '""')}"`;
+      // Prevent spreadsheet formula injection (OWASP CSV injection)
+      const safe = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+      if (safe.includes(',') || safe.includes('"') || safe.includes('\n')) {
+        return `"${safe.replace(/"/g, '""')}"`;
       }
-      return str;
+      return safe;
     }).join(',')
   );
   return [header, ...lines].join('\n');
@@ -873,7 +938,7 @@ ipcMain.handle(IPC.EXPORT_BULK, async (_event, req: BulkExportRequest) => {
       const { rows, label } = getCategoryData(crawlId, categories[0]);
       if (rows.length === 0) return { success: false, error: 'No data for this export' };
       const { filePath } = await dialog.showSaveDialog({
-        defaultPath: `ghostfrog-${label}.${ext}`,
+        defaultPath: `serpent-${label}.${ext}`,
         filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
       });
       if (!filePath) return { success: false, cancelled: true };
@@ -894,7 +959,7 @@ ipcMain.handle(IPC.EXPORT_BULK, async (_event, req: BulkExportRequest) => {
     for (const cat of categories) {
       const { rows, label } = getCategoryData(crawlId, cat);
       if (rows.length === 0) continue;
-      const outPath = path.join(dir, `ghostfrog-${label}.${ext}`);
+      const outPath = path.join(dir, `serpent-${label}.${ext}`);
       writeExportFile(outPath, rows, format);
       totalFiles++;
       totalRows += rows.length;
@@ -929,7 +994,7 @@ ipcMain.handle(IPC.EXPORT_PER_URL, async (_event, req: PerUrlExportRequest) => {
     if (rows.length === 0) return { success: false, error: 'No data for selected URLs' };
 
     const { filePath } = await dialog.showSaveDialog({
-      defaultPath: `ghostfrog-${label}-${urls.length}-pages.${ext}`,
+      defaultPath: `serpent-${label}-${urls.length}-pages.${ext}`,
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
     });
     if (!filePath) return { success: false, cancelled: true };
@@ -1071,4 +1136,25 @@ ipcMain.handle(IPC.SITEMAP_ANALYZE, async (_event, payload: { crawlId: string; s
       errors: [(err as Error).message],
     };
   }
+});
+
+// ─── License / Monetization IPC Handlers ────────────────────────────────────
+
+ipcMain.handle(IPC.LICENSE_GET, async () => {
+  const info = await getLicense();
+  const usage = getCrawlUsage();
+  return { ...info, ...usage };
+});
+
+ipcMain.handle(IPC.LICENSE_ACTIVATE, async (_event, key: string) => {
+  return activateLicense(key);
+});
+
+ipcMain.handle(IPC.LICENSE_DEACTIVATE, async () => {
+  await deactivateLicense();
+  return { success: true };
+});
+
+ipcMain.handle(IPC.CRAWL_GET_USAGE, async () => {
+  return getCrawlUsage();
 });

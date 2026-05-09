@@ -1,6 +1,6 @@
 {
-  "name": "ghostfrog",
-  "version": "1.0.2",
+  "name": "serpent",
+  "version": "1.0.3",
   "description": "AI-native local SEO spider — free Screaming Frog alternative",
   "main": "dist/main/index.js",
   "scripts": {
@@ -69,12 +69,13 @@
     "uuid": "^11.1.0"
   },
   "build": {
-    "appId": "com.organikpi.ghostfrog",
-    "productName": "GhostFrog",
+    "appId": "com.organikpi.serpent",
+    "productName": "Serpent",
     "copyright": "Copyright © 2026 Daniel Shashko",
     "directories": {
       "output": "release"
     },
+    "compression": "normal",
     "files": [
       "dist/**/*",
       "resources/**/*"

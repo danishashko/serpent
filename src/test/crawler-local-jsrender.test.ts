@@ -33,7 +33,7 @@ vi.mock('electron', () => {
   }
 
   const app = {
-    getPath: () => '/tmp/ghostfrog-test',
+    getPath: () => '/tmp/serpent-test',
     on: () => {},
     quit: () => {},
     whenReady: () => Promise.resolve(),
@@ -73,7 +73,7 @@ describe('crawler-local JS render', () => {
         followRedirects: true,
         sameOriginOnly: true,
         renderingMode: 'auto',
-        userAgent: 'GhostFrog-Test',
+        userAgent: 'Serpent-Test',
         timeout: 5000,
         crawlerType: 'local',
         jsRender: true,

@@ -51,7 +51,7 @@ export class CrawlOrchestrator extends EventEmitter {
   private apiKey: string | null = null;
   private bdZone: string = 'web_unlocker1';
   private robotsRules: RobotsRuleSet | null = null;
-  private robotsUserAgent: string = 'GhostFrog';
+  private robotsUserAgent: string = 'Serpent';
 
   private async loadRobots(origin: string, customBody: string | undefined): Promise<void> {
     // Custom robots.txt overrides any HTTP fetch (used by tests + advanced mode).
@@ -108,7 +108,7 @@ export class CrawlOrchestrator extends EventEmitter {
     const baseUrl = new URL(config.startUrl);
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
-    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'GhostFrog';
+    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'Serpent';
 
     if (config.respectRobots) {
       await this.loadRobots(this.baseOrigin, config.customRobotsTxt);
@@ -208,6 +208,10 @@ export class CrawlOrchestrator extends EventEmitter {
     return this.crawlId;
   }
 
+  getCompletedCount(): number {
+    return this.completedCount;
+  }
+
   /** Check if there's an incomplete crawl that can be resumed */
   getIncompleteCrawl(): CrawlRecord | undefined {
     return getLatestIncompleteCrawl();
@@ -233,7 +237,7 @@ export class CrawlOrchestrator extends EventEmitter {
     const baseUrl = new URL(config.startUrl);
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
-    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'GhostFrog';
+    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'Serpent';
 
     if (config.respectRobots) {
       await this.loadRobots(this.baseOrigin, config.customRobotsTxt);

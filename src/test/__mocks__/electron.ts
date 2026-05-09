@@ -2,7 +2,7 @@
 // doesn't crash when run under Node/Vitest.
 
 export const app = {
-  getPath: (_name: string) => '/tmp/ghostfrog-test',
+  getPath: (_name: string) => '/tmp/serpent-test',
   on: () => {},
   quit: () => {},
   whenReady: () => Promise.resolve(),
