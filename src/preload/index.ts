@@ -123,4 +123,13 @@ contextBridge.exposeInMainWorld('api', {
   licenseActivate: (key: string) => ipcRenderer.invoke(IPC.LICENSE_ACTIVATE, key),
   licenseDeactivate: () => ipcRenderer.invoke(IPC.LICENSE_DEACTIVATE),
   crawlGetUsage: () => ipcRenderer.invoke(IPC.CRAWL_GET_USAGE),
+
+  // Auto-updater events
+  onUpdateAvailable: (cb: (info: { version: string }) => void) => {
+    ipcRenderer.on('update:available', (_event, info) => cb(info));
+  },
+  onUpdateDownloaded: (cb: (info: { version: string }) => void) => {
+    ipcRenderer.on('update:downloaded', (_event, info) => cb(info));
+  },
+  installUpdate: () => ipcRenderer.invoke('update:install'),
 });

@@ -83,6 +83,9 @@ declare global {
       licenseActivate: (key: string) => Promise<{ success: boolean; error?: string }>;
       licenseDeactivate: () => Promise<{ success: boolean }>;
       crawlGetUsage: () => Promise<CrawlUsage>;
+      onUpdateAvailable: (cb: (info: { version: string }) => void) => void;
+      onUpdateDownloaded: (cb: (info: { version: string }) => void) => void;
+      installUpdate?: () => Promise<void>;
     };
   }
 }
@@ -110,6 +113,7 @@ export default function App(): React.ReactElement {
   const [contentGaps, setContentGaps] = useState<ContentGap[]>([]);
   const [licenseGateMode, setLicenseGateMode] = useState<'warn' | 'hard' | null>(null);
   const warnShownRef = useRef(false);
+  const [updateBanner, setUpdateBanner] = useState<{ version: string; downloaded: boolean } | null>(null);
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = toastCounter + 1;
@@ -219,6 +223,20 @@ export default function App(): React.ReactElement {
     };
   }, [showToast, loadCrawlData]);
 
+  // Subscribe to auto-updater events (only available in production)
+  useEffect(() => {
+    if (window.api.onUpdateAvailable) {
+      window.api.onUpdateAvailable((info) => {
+        setUpdateBanner({ version: info.version, downloaded: false });
+      });
+    }
+    if (window.api.onUpdateDownloaded) {
+      window.api.onUpdateDownloaded((info) => {
+        setUpdateBanner({ version: info.version, downloaded: true });
+      });
+    }
+  }, []);
+
   // Check for incomplete crawl on mount
   useEffect(() => {
     window.api.getIncompleteCrawl().then(incomplete => {
@@ -324,6 +342,44 @@ export default function App(): React.ReactElement {
           </div>
         )}
       </div>
+
+      {/* Update notification banner */}
+      {updateBanner && (
+        <div style={{
+          background: updateBanner.downloaded ? '#166534' : '#1e3a5f',
+          borderBottom: '1px solid var(--border)',
+          padding: '6px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: 12,
+          flexShrink: 0,
+        }}>
+          <span style={{ color: '#d1fae5' }}>
+            {updateBanner.downloaded
+              ? `✅ Serpent ${updateBanner.version} downloaded — restart to install`
+              : `⬆️ Serpent ${updateBanner.version} is available — downloading in background...`}
+          </span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {updateBanner.downloaded && (
+              <button
+                className="btn-icon"
+                style={{ fontSize: 11, padding: '2px 10px', background: 'var(--accent-green)', color: '#000', borderRadius: 4 }}
+                onClick={() => window.api.installUpdate?.()}
+              >
+                Restart & Install
+              </button>
+            )}
+            <button
+              className="btn-icon"
+              style={{ fontSize: 11, color: '#d1fae5', opacity: 0.7 }}
+              onClick={() => setUpdateBanner(null)}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>

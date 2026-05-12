@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
  */
 test.describe('Export', () => {
   test('exportCsv writes file to disk', async ({ electronApp, window }) => {
-    const outPath = join(tmpdir(), `ghostfrog-e2e-export-${Date.now()}.csv`);
+    const outPath = join(tmpdir(), `serpent-e2e-export-${Date.now()}.csv`);
 
     // Stub the save dialog inside the main process to return our path.
     await electronApp.evaluate(async ({ dialog }, savePath) => {

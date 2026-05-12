@@ -1,6 +1,6 @@
 # Code Signing Guide
 
-GhostFrog uses **SignPath Foundation** for free code signing (open-source projects).
+Serpent uses **SignPath Foundation** for free code signing (open-source projects).
 
 ## Why Code Signing Matters
 
@@ -21,7 +21,7 @@ Without a code signing certificate, Windows SmartScreen shows a warning when use
 1. Go to [signpath.io/apply](https://signpath.io/apply)
 2. Download the application form (`OSSRequestForm-v4.xlsx`)
 3. Fill it out with:
-   - **Project URL**: `https://github.com/danishashko/ghostfrog`
+   - **Project URL**: `https://github.com/danishashko/serpent`
    - **License**: MIT
    - **Description**: AI-native local SEO spider — free Screaming Frog alternative
 4. Email the completed form to `oss-support@signpath.org`
@@ -35,7 +35,7 @@ After approval, you'll receive:
 - Access to the SignPath dashboard
 
 In the SignPath dashboard:
-1. Create a **Project** named `ghostfrog`
+1. Create a **Project** named `serpent`
 2. Create a **Signing Policy** named `release-signing`
 3. Create an **Artifact Configuration** for the `.exe` installer
 
@@ -62,7 +62,7 @@ git push origin main --tags
 For local testing, you can create a self-signed certificate:
 
 ```powershell
-New-SelfSignedCertificate -Type CodeSigning -Subject "CN=GhostFrog Dev" -CertStoreLocation Cert:\CurrentUser\My
+New-SelfSignedCertificate -Type CodeSigning -Subject "CN=Serpent Dev" -CertStoreLocation Cert:\CurrentUser\My
 ```
 
 This won't eliminate SmartScreen warnings but is useful for testing the signing workflow.

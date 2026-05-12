@@ -14,8 +14,8 @@ import { defineConfig } from '@playwright/test';
  *   npm run test:installer:full       # includes silent installer + uninstall
  *
  * Prereq: `npm run dist` has been run at least once so that
- *   release/win-unpacked/GhostFrog.exe  exists, and
- *   release/GhostFrog Setup 1.0.0.exe   exists.
+ *   release/win-unpacked/Serpent.exe  exists, and
+ *   release/Serpent Setup 1.0.0.exe   exists.
  */
 export default defineConfig({
   testDir: './e2e-installer/tests',

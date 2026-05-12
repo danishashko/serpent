@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
 /**
- * Playwright config for GhostFrog Electron E2E tests.
+ * Playwright config for Serpent Electron E2E tests.
  *
  * Strategy:
  *   - globalSetup builds the renderer + main once before any test runs.

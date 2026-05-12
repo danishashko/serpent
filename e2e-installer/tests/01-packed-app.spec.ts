@@ -19,15 +19,15 @@ import { join, resolve } from 'node:path';
  * already-built exe in release/win-unpacked/.
  */
 
-const PACKED_EXE = resolve(__dirname, '..', '..', 'release', 'win-unpacked', 'GhostFrog.exe');
+const PACKED_EXE = resolve(__dirname, '..', '..', 'release', 'win-unpacked', 'Serpent.exe');
 
 test.skip(
   !existsSync(PACKED_EXE),
   `Packed exe not found at ${PACKED_EXE}. Run "npm run dist" first.`,
 );
 
-test('packed app launches and renders the GhostFrog shell', async () => {
-  const userDataDir = mkdtempSync(join(tmpdir(), 'ghostfrog-packed-'));
+test('packed app launches and renders the Serpent shell', async () => {
+  const userDataDir = mkdtempSync(join(tmpdir(), 'serpent-packed-'));
 
   const app = await electron.launch({
     executablePath: PACKED_EXE,
@@ -58,7 +58,7 @@ test('packed app launches and renders the GhostFrog shell', async () => {
     if (!win) throw new Error('Renderer window never appeared');
 
     await win.waitForLoadState('domcontentloaded');
-    await expect(win.locator('text=GhostFrog').first()).toBeVisible({ timeout: 30_000 });
+    await expect(win.locator('text=Serpent').first()).toBeVisible({ timeout: 30_000 });
 
     // Confirm the preload bridge is intact in the packed bundle.
     const apiKeys = await win.evaluate(() => Object.keys((window as unknown as { api?: object }).api ?? {}));

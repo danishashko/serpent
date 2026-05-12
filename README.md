@@ -1,8 +1,8 @@
-# 🐸 GhostFrog
+# � Serpent
 
 **AI-native SEO spider for technical audits — free, open-source, desktop.**
 
-GhostFrog is an Electron-based SEO crawling tool that brings enterprise-grade site auditing to your desktop with built-in AI analysis. Think Screaming Frog, but open-source and powered by your choice of LLM.
+Serpent is an Electron-based SEO crawling tool that brings enterprise-grade site auditing to your desktop with built-in AI analysis. Think Screaming Frog, but open-source and powered by your choice of LLM.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/Electron-35-blue.svg)](https://www.electronjs.org/)
@@ -83,8 +83,8 @@ GhostFrog is an Electron-based SEO crawling tool that brings enterprise-grade si
 ### Setup
 
 ```bash
-git clone https://github.com/danishashko/ghostfrog.git
-cd ghostfrog
+git clone https://github.com/danishashko/serpent.git
+cd serpent
 npm install
 ```
 
@@ -156,9 +156,9 @@ URL Input → Crawl Engine → Data Extraction → SQLite Storage → AI Analysi
 
 ---
 
-## GhostFrog vs Screaming Frog
+## Serpent vs Screaming Frog
 
-| Feature | GhostFrog | Screaming Frog |
+| Feature | Serpent | Screaming Frog |
 |---------|-----------|----------------|
 | Price | **Free / Open Source** | £199/yr |
 | AI Analysis | ✅ Multi-LLM (4 providers) | ❌ |
@@ -204,7 +204,7 @@ URL Input → Crawl Engine → Data Extraction → SQLite Storage → AI Analysi
 ## Project Structure
 
 ```
-ghostfrog/
+serpent/
 ├── src/
 │   ├── main/                        # Electron main process
 │   │   ├── index.ts                 # Window creation, IPC handlers
@@ -258,7 +258,7 @@ Contributions welcome! Please open an issue first to discuss what you'd like to 
 
 ## Privacy
 
-[Privacy Policy](PRIVACY_POLICY.md) — GhostFrog collects zero user data. All processing is local.
+[Privacy Policy](PRIVACY_POLICY.md) — Serpent collects zero user data. All processing is local.
 
 ---
 

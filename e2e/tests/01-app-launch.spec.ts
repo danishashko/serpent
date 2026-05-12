@@ -1,11 +1,11 @@
 import { test, expect } from '../fixtures';
 
 test.describe('App launch', () => {
-  test('window opens and renders the GhostFrog shell', async ({ window }) => {
-    await expect(window).toHaveTitle(/GhostFrog|Vite/i);
+  test('window opens and renders the Serpent shell', async ({ window }) => {
+    await expect(window).toHaveTitle(/Serpent|Vite/i);
 
     // Branding visible in title bar
-    await expect(window.getByText('🐸 GhostFrog')).toBeVisible();
+    await expect(window.getByText('🐍 Serpent')).toBeVisible();
 
     // Default view = Crawl, primary CTA visible
     await expect(window.getByRole('button', { name: /Start Crawl/i })).toBeVisible();

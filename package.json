@@ -32,10 +32,10 @@
   ],
   "author": "Daniel Shashko <daniel@organikpi.com>",
   "license": "MIT",
-  "homepage": "https://github.com/danishashko/ghostfrog",
+  "homepage": "https://github.com/danishashko/serpent",
   "repository": {
     "type": "git",
-    "url": "https://github.com/danishashko/ghostfrog.git"
+    "url": "https://github.com/danishashko/serpent.git"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
@@ -105,7 +105,7 @@
     "publish": {
       "provider": "github",
       "owner": "danishashko",
-      "repo": "ghostfrog"
+      "repo": "serpent"
     }
   }
 }

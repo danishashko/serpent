@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startSiteServer, type SiteServer } from './helpers/site-server';
 
-interface GhostFrogFixtures {
+interface SerpentFixtures {
   electronApp: ElectronApplication;
   window: Page;
   userDataDir: string;
@@ -17,9 +17,9 @@ interface GhostFrogFixtures {
  *   - NODE_ENV=development → main loads http://localhost:5173 (vite preview)
  *   - Disabled GPU/sandbox flags for CI stability
  */
-export const test = base.extend<GhostFrogFixtures>({
+export const test = base.extend<SerpentFixtures>({
   userDataDir: async ({}, use) => {
-    const dir = mkdtempSync(join(tmpdir(), 'ghostfrog-e2e-'));
+    const dir = mkdtempSync(join(tmpdir(), 'serpent-e2e-'));
     await use(dir);
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* keep going */ }
   },
@@ -69,7 +69,7 @@ export const test = base.extend<GhostFrogFixtures>({
     if (!win) throw new Error('Renderer window never appeared (only DevTools found)');
 
     await win.waitForLoadState('domcontentloaded');
-    await win.waitForSelector('text=GhostFrog', { timeout: 20_000 });
+    await win.waitForSelector('text=Serpent', { timeout: 20_000 });
     await use(win);
   },
 });

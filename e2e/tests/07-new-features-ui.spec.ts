@@ -22,7 +22,7 @@ test.describe('New features — UI-driven QA', () => {
     test.setTimeout(60_000);
 
     // Sanity: shell loaded
-    await expect(window.locator('text=GhostFrog').first()).toBeVisible();
+    await expect(window.locator('text=Serpent').first()).toBeVisible();
 
     // The robots section only renders when respectRobots is checked (default: true).
     // Verify the section is present by its label text.
@@ -71,7 +71,7 @@ test.describe('New features — UI-driven QA', () => {
   // ────────────────────────────────────────────────────────────────────────
   test('JS Rendering toggle is wired and persists in config', async ({ window }) => {
     test.setTimeout(30_000);
-    await expect(window.locator('text=GhostFrog').first()).toBeVisible();
+    await expect(window.locator('text=Serpent').first()).toBeVisible();
 
     // Make sure the local engine is selected (default), then assert the
     // JS Rendering checkbox is visible & toggles.
@@ -102,7 +102,7 @@ test.describe('New features — UI-driven QA', () => {
 
     // Stub the save dialog so the sitemap "Generate & Save" writes to a known path
     // (the dialog would otherwise block the headless run).
-    const sitemapDir = mkdtempSync(join(tmpdir(), 'ghostfrog-e2e-sitemap-'));
+    const sitemapDir = mkdtempSync(join(tmpdir(), 'serpent-e2e-sitemap-'));
     const sitemapOutPath = join(sitemapDir, 'sitemap.xml');
     await electronApp.evaluate(async ({ dialog }, savePath) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

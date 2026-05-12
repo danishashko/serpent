@@ -26,7 +26,7 @@ const RELEASE_DIR = resolve(__dirname, '..', '..', 'release');
 function findInstaller(): string | null {
   if (!existsSync(RELEASE_DIR)) return null;
   const entries = readdirSync(RELEASE_DIR);
-  const nsis = entries.find((f) => /^GhostFrog Setup .*\.exe$/i.test(f));
+  const nsis = entries.find((f) => /^Serpent Setup .*\.exe$/i.test(f));
   return nsis ? join(RELEASE_DIR, nsis) : null;
 }
 
@@ -38,7 +38,7 @@ test.skip(
 );
 test.skip(
   !installer,
-  `No "GhostFrog Setup *.exe" found in ${RELEASE_DIR}. Run "npm run dist" first.`,
+  `No "Serpent Setup *.exe" found in ${RELEASE_DIR}. Run "npm run dist" first.`,
 );
 
 test('NSIS installer: silent install → launch → smoke → silent uninstall', async () => {
@@ -46,9 +46,9 @@ test('NSIS installer: silent install → launch → smoke → silent uninstall',
 
   // Install into a disposable directory under tmp to avoid clobbering an
   // existing user-installed copy.
-  const installDir = mkdtempSync(join(tmpdir(), 'ghostfrog-install-'));
-  const exePath = join(installDir, 'GhostFrog.exe');
-  const uninstallExe = join(installDir, 'Uninstall GhostFrog.exe');
+  const installDir = mkdtempSync(join(tmpdir(), 'serpent-install-'));
+  const exePath = join(installDir, 'Serpent.exe');
+  const uninstallExe = join(installDir, 'Uninstall Serpent.exe');
 
   // ── INSTALL ────────────────────────────────────────────────────────────
   // electron-builder NSIS supports `/S` for silent + `/D=path` for install dir.
@@ -62,7 +62,7 @@ test('NSIS installer: silent install → launch → smoke → silent uninstall',
   expect(existsSync(exePath), `expected ${exePath} after silent install`).toBe(true);
 
   // ── LAUNCH INSTALLED BINARY ────────────────────────────────────────────
-  const userDataDir = mkdtempSync(join(tmpdir(), 'ghostfrog-installed-userdata-'));
+  const userDataDir = mkdtempSync(join(tmpdir(), 'serpent-installed-userdata-'));
   const app = await electron.launch({
     executablePath: exePath,
     args: [`--user-data-dir=${userDataDir}`, '--no-sandbox', '--disable-gpu'],
@@ -90,7 +90,7 @@ test('NSIS installer: silent install → launch → smoke → silent uninstall',
     if (!win) throw new Error('Renderer window never appeared after install');
 
     await win.waitForLoadState('domcontentloaded');
-    await expect(win.locator('text=GhostFrog').first()).toBeVisible({ timeout: 30_000 });
+    await expect(win.locator('text=Serpent').first()).toBeVisible({ timeout: 30_000 });
     await expect(win.getByRole('button', { name: /Crawl/ }).first()).toBeVisible();
   } finally {
     await app.close().catch(() => undefined);

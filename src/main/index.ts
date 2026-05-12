@@ -143,12 +143,25 @@ app.whenReady().then(() => {
   createWindow();
   console.log('[MAIN] window created');
 
-  // Auto-update (silent check, only in production)
+  // Auto-update (silent check + IPC events, only in production)
   if (!isDev) {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('update-available', (info) => {
+      mainWindow?.webContents.send('update:available', { version: info.version });
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      mainWindow?.webContents.send('update:downloaded', { version: info.version });
+    });
+
     autoUpdater.checkForUpdatesAndNotify().catch(() => {});
   }
+
+  ipcMain.handle('update:install', () => {
+    autoUpdater.quitAndInstall();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
