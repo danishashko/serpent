@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 
 // Override the 'electron' alias for this test file so that BrowserWindow
 // returns a fully rendered HTML string from executeJavaScript().
@@ -56,7 +56,20 @@ vi.mock('axios', () => ({
 let crawlPageLocal: typeof import('../main/crawler-local').crawlPageLocal;
 
 beforeAll(async () => {
+  // Reset the module registry so crawler-local.ts is re-loaded with the
+  // electron mock defined above (vi.mock('electron', ...)) rather than
+  // a potentially cached version from an earlier test file.
+  vi.resetModules();
   ({ crawlPageLocal } = await import('../main/crawler-local'));
+});
+
+afterAll(() => {
+  // Remove the jsrender electron mock and clear the module cache so that
+  // any test files running AFTER this one (regardless of order) use the
+  // global path-alias mock instead of the jsrender factory.
+  // Use vi.doUnmock (non-hoisted) to avoid undoing the vi.mock() above.
+  vi.doUnmock('electron');
+  vi.resetModules();
 });
 
 describe('crawler-local JS render', () => {

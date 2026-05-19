@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import CrawlConfig from './components/CrawlConfig';
 import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import LicenseGate from './components/LicenseGate';
 import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlUsage } from '../types/index';
 
 // Allow Electron drag region CSS property
@@ -111,8 +110,6 @@ export default function App(): React.ReactElement {
   const [perfScores, setPerfScores] = useState<PerformanceScore[]>([]);
   const [discoverResults, setDiscoverResults] = useState<DiscoverResult[]>([]);
   const [contentGaps, setContentGaps] = useState<ContentGap[]>([]);
-  const [licenseGateMode, setLicenseGateMode] = useState<'warn' | 'hard' | null>(null);
-  const warnShownRef = useRef(false);
   const [updateBanner, setUpdateBanner] = useState<{ version: string; downloaded: boolean } | null>(null);
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
@@ -196,15 +193,6 @@ export default function App(): React.ReactElement {
       livePreviewWarnedRef.current = false;
       loadCrawlData(crawlId);
       showToast('Crawl completed!', 'success');
-      // Re-check free tier usage after each crawl
-      window.api.crawlGetUsage().then(usage => {
-        if (usage.atLimit) {
-          setLicenseGateMode('hard');
-        } else if (!warnShownRef.current && usage.atWarning) {
-          warnShownRef.current = true;
-          setLicenseGateMode('warn');
-        }
-      }).catch(() => {});
     });
 
     window.api.onCostLimit((data) => {
@@ -244,13 +232,6 @@ export default function App(): React.ReactElement {
         setResumePrompt({ id: incomplete.id, startUrl: incomplete.startUrl, completedUrls: incomplete.completedUrls });
       }
     });
-    // Check license / free tier usage on mount
-    window.api.crawlGetUsage().then(usage => {
-      if (!warnShownRef.current && usage.atWarning && !usage.atLimit) {
-        warnShownRef.current = true;
-        setLicenseGateMode('warn');
-      }
-    }).catch(() => {});
   }, []);
 
   const handleResumeCrawl = async () => {
@@ -398,7 +379,6 @@ export default function App(): React.ReactElement {
                 progress={progress}
                 onCrawlStart={handleCrawlStart}
                 showToast={showToast}
-                onUpgradeRequired={() => setLicenseGateMode('hard')}
               />
               {progress && progress.totalSpendUsd > 0 && (
                 <CostMonitor progress={progress} />
@@ -505,17 +485,6 @@ export default function App(): React.ReactElement {
             </div>
           </div>
         </div>
-      )}
-
-      {/* License Gate */}
-      {licenseGateMode !== null && (
-        <LicenseGate
-          mode={licenseGateMode}
-          totalCrawled={0}
-          onClose={licenseGateMode === 'warn' ? () => setLicenseGateMode(null) : undefined}
-          onActivated={() => { setLicenseGateMode(null); warnShownRef.current = false; }}
-          showToast={showToast}
-        />
       )}
 
       {/* Toasts */}

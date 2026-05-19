@@ -5,7 +5,6 @@ interface Props {
   progress: CrawlProgress | null;
   onCrawlStart: (crawlId: string) => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
-  onUpgradeRequired?: () => void;
 }
 
 type CrawlMode = 'spider' | 'list';
@@ -33,7 +32,7 @@ const defaultConfig: CrawlConfigType = {
   bdZone: 'web_unlocker1',
 };
 
-export default function CrawlConfig({ progress, onCrawlStart, showToast, onUpgradeRequired }: Props): React.ReactElement {
+export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props): React.ReactElement {
   const [config, setConfig] = useState<CrawlConfigType>(defaultConfig);
   const [listUrls, setListUrls] = useState('');
   const [isRunning, setIsRunning] = useState(false);
@@ -79,8 +78,6 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast, onUpgra
       if (result.success && result.crawlId) {
         onCrawlStart(result.crawlId);
         setIsRunning(true);
-      } else if (result.requiresUpgrade) {
-        onUpgradeRequired?.();
       } else {
         showToast(result.error ?? 'Failed to start crawl', 'error');
       }

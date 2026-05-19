@@ -14,11 +14,12 @@ import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, 
 import { generateSitemap as buildSitemap } from './sitemap-generator';
 import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
-import { initCrawlCounter, addCrawledUrls, getCrawlUsage, FREE_TIER_LIMIT } from './crawl-counter';
+import { initCrawlCounter, addCrawledUrls, getCrawlUsage } from './crawl-counter';
 import { getLicense, activateLicense, deactivateLicense } from './license-manager';
 import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions } from '../types/index';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
+import { startMcpServer } from './mcp-server';
 
 const KEYTAR_SERVICE = 'serpent';
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -142,6 +143,7 @@ app.whenReady().then(() => {
   console.log('[MAIN] DB initialized — creating window');
   createWindow();
   console.log('[MAIN] window created');
+  startMcpServer(orchestrator);
 
   // Auto-update (silent check + IPC events, only in production)
   if (!isDev) {
@@ -201,19 +203,7 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
       return { success: false, error: 'Invalid start URL. Must be a public http/https address.' };
     }
 
-    // ── Free tier gate ─────────────────────────────────────────────────────
-    const license = await getLicense();
-    if (license.tier === 'free') {
-      const usage = getCrawlUsage();
-      if (usage.totalCrawled >= FREE_TIER_LIMIT) {
-        return {
-          success: false,
-          error: `Free tier limit reached (${usage.totalCrawled.toLocaleString()} / ${FREE_TIER_LIMIT.toLocaleString()} URLs). Activate a Pro license to keep crawling.`,
-          requiresUpgrade: true,
-        };
-      }
-    }
-    // ──────────────────────────────────────────────────────────────────────
+    // ── (Open-source: no free tier gate) ──────────────────────────────────────
 
     let apiKey: string | null = null;
     let bdZone: string | null = null;
