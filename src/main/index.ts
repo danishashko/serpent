@@ -22,7 +22,7 @@ import fs from 'fs';
 import { startMcpServer } from './mcp-server';
 
 const KEYTAR_SERVICE = 'serpent';
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 
 let mainWindow: BrowserWindow | null = null;
 const orchestrator = new CrawlOrchestrator();

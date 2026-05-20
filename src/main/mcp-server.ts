@@ -6,8 +6,8 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import keytar from 'keytar';
 import { CrawlOrchestrator } from './crawler-orchestrator';
-import { getAllCrawls, getPagesByCrawl } from './database';
-import type { CrawlRecord, PageData } from '../types/index';
+import { getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl } from './database';
+import type { CrawlRecord, PageData, LinkData, ImageData } from '../types/index';
 
 const KEYTAR_SERVICE = 'serpent';
 const MCP_PORT = 7777;
@@ -38,7 +38,7 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
 }
 
 function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
-  const server = new McpServer({ name: 'ghostfrog', version: '1.0.3' });
+  const server = new McpServer({ name: 'serpent', version: '1.0.3' });
 
   // ── start_crawl ────────────────────────────────────────────────────────────
   server.registerTool(
@@ -49,14 +49,14 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         url: z.string().describe('The starting URL to crawl (e.g. https://example.com)'),
         engine: z.enum(['local', 'brightdata']).optional().describe('Crawl engine. Defaults to local.'),
         mode: z.enum(['spider', 'list']).optional().describe('spider = follow links, list = crawl only provided URL. Defaults to spider.'),
-        max_urls: z.number().int().min(1).max(10000).optional().describe('Maximum URLs to crawl. Defaults to 100.'),
+        max_urls: z.number().int().min(1).max(50000).optional().describe('Maximum URLs to crawl. Defaults to 500. Set higher for large sites (e.g. 2000 for a 1000-page site, 5000+ for a large blog). Always pass this explicitly — the default is conservative.'),
         max_depth: z.number().int().min(1).max(20).optional().describe('Maximum crawl depth. Defaults to 10.'),
       }),
     },
     async ({ url, engine, mode, max_urls, max_depth }) => {
       const resolvedEngine = engine ?? 'local';
       const resolvedMode = mode ?? 'spider';
-      const resolvedMaxUrls = max_urls ?? 100;
+      const resolvedMaxUrls = max_urls ?? 500;
       const resolvedMaxDepth = max_depth ?? 10;
 
       let apiKey: string | null = null;
@@ -66,7 +66,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
         bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
         if (!apiKey) {
-          return { content: [{ type: 'text' as const, text: 'BrightData API key not configured. Please add it in GhostFrog Settings.' }] };
+          return { content: [{ type: 'text' as const, text: 'BrightData API key not configured. Please add it in Serpent Settings.' }] };
         }
       }
 
@@ -193,12 +193,30 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
           title: p.title,
           titleLength: p.titleLength,
           metaDescription: p.metaDescription,
+          metaDescLength: p.metaDescLength,
           h1: p.h1,
+          h2: p.h2,
+          h1Count: p.h1Count,
+          h2Count: p.h2Count,
           isIndexable: p.isIndexable,
           canonicalUrl: p.canonicalUrl,
+          isCanonicalized: p.isCanonicalized,
           wordCount: p.wordCount,
+          textRatio: p.textRatio,
           responseTimeMs: p.responseTimeMs,
+          pageSizeBytes: p.pageSizeBytes,
           crawlDepth: p.crawlDepth,
+          imageCount: p.imageCount,
+          linkScore: p.linkScore,
+          robotsDirectives: p.robotsDirectives,
+          // Open Graph
+          ogTitle: p.ogTitle,
+          ogDescription: p.ogDescription,
+          ogImage: p.ogImage,
+          ogType: p.ogType,
+          // Structured Data
+          hasStructuredData: p.hasStructuredData,
+          schemaTypes: p.schemaTypes,
         })),
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
@@ -250,6 +268,48 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         if (p.canonicalUrl && p.canonicalUrl !== p.url) {
           issues.info.push({ url: p.url, details: `Canonicalized to ${p.canonicalUrl}` });
         }
+        if (!p.ogImage || !p.ogImage.trim()) {
+          issues.warning.push({ url: p.url, details: 'Missing OG image (og:image)' });
+        }
+        if (!p.hasStructuredData) {
+          issues.info.push({ url: p.url, details: 'No structured data (Schema.org)' });
+        }
+        if (p.wordCount !== null && p.wordCount > 0 && p.wordCount < 300) {
+          issues.warning.push({ url: p.url, details: `Thin content: only ${p.wordCount} words` });
+        }
+        if (p.h2Count !== null && p.h2Count === 0 && p.wordCount !== null && p.wordCount > 500) {
+          issues.info.push({ url: p.url, details: 'No H2 headings on a long page (affects readability/SEO)' });
+        }
+      }
+
+      // Duplicate title detection
+      const titleMap = new Map<string, string[]>();
+      for (const p of pages) {
+        if (p.title && p.title.trim()) {
+          const t = p.title.trim().toLowerCase();
+          if (!titleMap.has(t)) titleMap.set(t, []);
+          titleMap.get(t)!.push(p.url);
+        }
+      }
+      for (const [title, urls] of titleMap) {
+        if (urls.length > 1) {
+          issues.warning.push({ url: urls.join(', '), details: `Duplicate title: "${title}" on ${urls.length} pages` });
+        }
+      }
+
+      // Duplicate meta description detection
+      const metaMap = new Map<string, string[]>();
+      for (const p of pages) {
+        if (p.metaDescription && p.metaDescription.trim()) {
+          const m = p.metaDescription.trim().toLowerCase();
+          if (!metaMap.has(m)) metaMap.set(m, []);
+          metaMap.get(m)!.push(p.url);
+        }
+      }
+      for (const [, urls] of metaMap) {
+        if (urls.length > 1) {
+          issues.warning.push({ url: urls.join(', '), details: `Duplicate meta description on ${urls.length} pages` });
+        }
       }
 
       const result = {
@@ -295,6 +355,142 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       const rows = pages.map((p) => headers.map((h) => escape(p[h])).join(','));
       const csv = [headers.join(','), ...rows].join('\n');
       return { content: [{ type: 'text' as const, text: csv }] };
+    }
+  );
+
+  // ── get_links ──────────────────────────────────────────────────────────────
+  server.registerTool(
+    'get_links',
+    {
+      description: 'Get the internal link graph for a crawl. Returns source→target pairs with anchor text. Use this to find orphaned pages (no inbound links), link equity distribution, and navigation structure.',
+      inputSchema: z.object({
+        crawl_id: z.string().describe('Crawl ID from list_crawls or start_crawl'),
+        filter: z.enum(['all', 'internal', 'external']).optional().describe('Filter by link type. Defaults to "internal".'),
+        limit: z.number().int().min(1).max(5000).optional().describe('Max links to return. Defaults to 200.'),
+        offset: z.number().int().min(0).optional().describe('Offset for pagination. Defaults to 0.'),
+      }),
+    },
+    async ({ crawl_id, filter, limit, offset }) => {
+      const resolvedFilter = filter ?? 'internal';
+      const resolvedLimit = limit ?? 200;
+      const resolvedOffset = offset ?? 0;
+
+      const allLinks = getLinksByCrawl(crawl_id) as LinkData[];
+      if (allLinks.length === 0) {
+        return { content: [{ type: 'text' as const, text: `No links found for crawl ${crawl_id}.` }] };
+      }
+
+      const filtered = resolvedFilter === 'all'
+        ? allLinks
+        : resolvedFilter === 'internal'
+          ? allLinks.filter(l => l.isInternal)
+          : allLinks.filter(l => !l.isInternal);
+
+      const slice = filtered.slice(resolvedOffset, resolvedOffset + resolvedLimit);
+
+      // Compute orphaned pages: pages crawled but with 0 inbound internal links
+      const pages = getPagesByCrawl(crawl_id) as PageData[];
+      const inboundCount = new Map<string, number>();
+      for (const p of pages) inboundCount.set(p.url, 0);
+      for (const l of allLinks) {
+        if (l.isInternal && inboundCount.has(l.targetUrl)) {
+          inboundCount.set(l.targetUrl, (inboundCount.get(l.targetUrl) ?? 0) + 1);
+        }
+      }
+      const orphaned = [...inboundCount.entries()]
+        .filter(([, count]) => count === 0)
+        .map(([url]) => url);
+
+      // Top 10 most-linked pages
+      const sorted = [...inboundCount.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([url, count]) => ({ url, inbound_links: count }));
+
+      const result = {
+        total_links: filtered.length,
+        offset: resolvedOffset,
+        limit: resolvedLimit,
+        orphaned_pages_count: orphaned.length,
+        orphaned_pages: orphaned.slice(0, 50),
+        top_linked_pages: sorted,
+        links: slice.map(l => ({
+          source: l.sourceUrl,
+          target: l.targetUrl,
+          anchor: l.anchorText,
+          rel: l.relAttr,
+        })),
+      };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── get_images ─────────────────────────────────────────────────────────────
+  server.registerTool(
+    'get_images',
+    {
+      description: 'Audit images found during a crawl. Returns images with missing alt text, format info, and lazy-loading status. Useful for accessibility and performance analysis.',
+      inputSchema: z.object({
+        crawl_id: z.string().describe('Crawl ID from list_crawls or start_crawl'),
+        missing_alt_only: z.boolean().optional().describe('If true, return only images with missing alt text. Defaults to false.'),
+        limit: z.number().int().min(1).max(2000).optional().describe('Max images to return. Defaults to 100.'),
+        offset: z.number().int().min(0).optional().describe('Offset for pagination. Defaults to 0.'),
+      }),
+    },
+    async ({ crawl_id, missing_alt_only, limit, offset }) => {
+      const resolvedLimit = limit ?? 100;
+      const resolvedOffset = offset ?? 0;
+
+      const allImages = getImagesByCrawl(crawl_id) as ImageData[];
+      if (allImages.length === 0) {
+        return { content: [{ type: 'text' as const, text: `No images found for crawl ${crawl_id}.` }] };
+      }
+
+      const missingAlt = allImages.filter(i => !i.altText || !i.altText.trim());
+      const filtered = missing_alt_only ? missingAlt : allImages;
+      const slice = filtered.slice(resolvedOffset, resolvedOffset + resolvedLimit);
+
+      const result = {
+        total_images: allImages.length,
+        missing_alt_count: missingAlt.length,
+        offset: resolvedOffset,
+        limit: resolvedLimit,
+        images: slice.map(i => ({
+          page: i.pageUrl,
+          src: i.imageUrl,
+          alt: i.altText,
+          format: i.format,
+          hasWidth: i.hasWidth,
+          hasHeight: i.hasHeight,
+          isLazy: i.isLazy,
+        })),
+      };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── get_settings ───────────────────────────────────────────────────────────
+  server.registerTool(
+    'get_settings',
+    {
+      description: 'Check which crawl engines and features are configured in Serpent. Call this before starting a crawl to know if Bright Data proxy is available. Returns available engines and configuration status.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const bdApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
+      const bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+      const brightdataConfigured = !!bdApiKey;
+
+      const settings = {
+        available_engines: brightdataConfigured ? ['local', 'brightdata'] : ['local'],
+        brightdata_configured: brightdataConfigured,
+        brightdata_zone: bdZone || 'web_unlocker1',
+        default_engine: brightdataConfigured ? 'brightdata' : 'local',
+        notes: brightdataConfigured
+          ? 'Bright Data is configured. Use engine="brightdata" for JS-rendered pages and sites with bot protection.'
+          : 'Bright Data is NOT configured. Only local crawling is available. To enable Bright Data, set your API key in Serpent Settings.',
+      };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(settings, null, 2) }] };
     }
   );
 
@@ -394,7 +590,7 @@ export function startMcpServer(orchestrator: CrawlOrchestrator): http.Server {
   });
 
   httpServer.listen(MCP_PORT, '127.0.0.1', () => {
-    console.log(`[MCP] GhostFrog MCP server running on http://127.0.0.1:${MCP_PORT}/mcp`);
+    console.log(`[MCP] Serpent MCP server running on http://127.0.0.1:${MCP_PORT}/mcp`);
   });
 
   return httpServer;

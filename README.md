@@ -197,7 +197,64 @@ URL Input → Crawl Engine → Data Extraction → SQLite Storage → AI Analysi
 - **p-queue** — concurrency control
 - **keytar** — secure credential storage
 - **axios** — HTTP client
+- **@modelcontextprotocol/sdk** — MCP server (built-in AI assistant integration)
 - **Vitest** — unit testing
+
+---
+
+## MCP Server (Model Context Protocol)
+
+Serpent exposes a built-in MCP server on **`http://127.0.0.1:7777/mcp`** while the app is running. This lets AI assistants like Claude Desktop drive crawls and query results directly — no manual export needed.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `start_crawl` | Start a crawl by URL. Returns a `crawl_id`. |
+| `stop_crawl` | Stop the currently running crawl. |
+| `get_crawl_status` | Get live progress of the active crawl. |
+| `list_crawls` | List all past crawls in the database. |
+| `get_results` | Get page-level SEO data for a crawl (paginated). |
+| `get_issues` | Get SEO issues grouped by severity (Critical / Warning / Info). |
+| `export_csv` | Export full crawl data as CSV text. |
+
+### Connect from Claude Desktop
+
+Add to your `claude_desktop_config.json` (while Serpent is running):
+
+```json
+{
+  "mcpServers": {
+    "serpent": {
+      "type": "http",
+      "url": "http://127.0.0.1:7777/mcp"
+    }
+  }
+}
+```
+
+Config file location:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Restart Claude Desktop after saving. Serpent's tools will appear in the tool list.
+
+### Test with MCP Inspector
+
+```bash
+# Start Serpent first, then:
+npx @modelcontextprotocol/inspector http://127.0.0.1:7777/mcp
+```
+
+Opens a browser UI where you can call any tool interactively.
+
+### Example: Crawl a site and get issues via Claude
+
+> "Use Serpent to crawl https://example.com with max 50 URLs, then show me all critical SEO issues."
+
+Claude will call `start_crawl` → poll `get_crawl_status` → call `get_issues` — all automatically.
+
+> **Note:** The MCP server only accepts connections from `localhost` / `127.0.0.1`. It is not exposed to the network.
 
 ---
 
@@ -215,7 +272,8 @@ serpent/
 │   │   ├── ai-analyzer.ts           # Multi-LLM analysis + issue recommendations
 │   │   ├── gsc-client.ts            # Google Search Console OAuth + analytics
 │   │   ├── serp-client.ts           # SERP ranking via Bright Data
-│   │   └── cost-tracker.ts          # Bright Data spend monitoring
+│   │   ├── cost-tracker.ts          # Bright Data spend monitoring
+│   │   └── mcp-server.ts            # MCP HTTP server (port 7777)
 │   ├── preload/
 │   │   └── index.ts                 # IPC bridge (contextBridge)
 │   ├── renderer/

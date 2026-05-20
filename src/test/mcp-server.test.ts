@@ -165,7 +165,7 @@ describe('MCP HTTP server', () => {
     const json = parseSseOrJson(res.body, res.headers['content-type'] ?? '') as Record<string, unknown>;
     const result = json?.result as Record<string, unknown>;
     const serverInfo = result?.serverInfo as Record<string, unknown>;
-    expect(serverInfo?.name).toBe('ghostfrog');
+    expect(serverInfo?.name).toBe('serpent');
   });
 
   it('can list tools after session initialization', async () => {
