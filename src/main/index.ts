@@ -199,8 +199,11 @@ orchestrator.on('cost-limit-warning', (data: { currentSpend: number; limit: numb
 
 ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
   try {
-    if (!isSafeExternalUrl(config.startUrl)) {
-      return { success: false, error: 'Invalid start URL. Must be a public http/https address.' };
+    // Basic URL validation — must be http/https
+    let urlValid = false;
+    try { urlValid = ['http:', 'https:'].includes(new URL(config.startUrl).protocol); } catch { /* invalid */ }
+    if (!urlValid) {
+      return { success: false, error: 'Invalid start URL. Must be an http/https address.' };
     }
 
     // ── (Open-source: no free tier gate) ──────────────────────────────────────
@@ -209,6 +212,10 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
     let bdZone: string | null = null;
 
     if (config.engine === 'brightdata') {
+      // BrightData proxies requests via external servers — block internal IPs to prevent SSRF
+      if (!isSafeExternalUrl(config.startUrl)) {
+        return { success: false, error: 'Invalid start URL. Must be a public http/https address.' };
+      }
       apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
       bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
       if (!apiKey) {
