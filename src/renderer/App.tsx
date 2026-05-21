@@ -299,7 +299,7 @@ export default function App(): React.ReactElement {
         flexShrink: 0,
       }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent-green)', WebkitAppRegion: 'no-drag' }}>
-          � Serpent
+          🐍 Serpent
         </span>
         <nav style={{ display: 'flex', gap: 4, WebkitAppRegion: 'no-drag' }}>
           {(['crawl', 'settings'] as View[]).map(v => (

@@ -109,5 +109,9 @@
       "owner": "danishashko",
       "repo": "serpent"
     }
+  },
+  "electronmon": {
+    "patterns": ["dist/**"],
+    "logLevel": "quiet"
   }
 }

@@ -26,6 +26,7 @@ const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 
 let mainWindow: BrowserWindow | null = null;
 const orchestrator = new CrawlOrchestrator();
+let mcpHttpServer: import('http').Server | null = null;
 
 // ─── URL / SSRF Safety Helpers ────────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ app.whenReady().then(() => {
   console.log('[MAIN] DB initialized — creating window');
   createWindow();
   console.log('[MAIN] window created');
-  startMcpServer(orchestrator);
+  mcpHttpServer = startMcpServer(orchestrator);
 
   // Auto-update (silent check + IPC events, only in production)
   if (!isDev) {
@@ -172,6 +173,21 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Gracefully close the MCP HTTP server before the process exits so the port
+// (7777) is released before electronmon restarts the process in dev mode.
+app.on('before-quit', (event) => {
+  if (mcpHttpServer) {
+    event.preventDefault();
+    const srv = mcpHttpServer;
+    mcpHttpServer = null;
+    // closeAllConnections() available in Node 18.2+ — forces immediate release
+    if (typeof (srv as any).closeAllConnections === 'function') {
+      (srv as any).closeAllConnections();
+    }
+    srv.close(() => app.quit());
+  }
 });
 
 // ─── Crawl IPC Handlers ────────────────────────────────────────────────────────

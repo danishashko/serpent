@@ -469,6 +469,32 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
     }
   );
 
+  // ── set_settings ───────────────────────────────────────────────────────────
+  server.registerTool(
+    'set_settings',
+    {
+      description: 'Save Bright Data credentials to Serpent so the brightdata crawl engine becomes available. Call get_settings afterwards to confirm.',
+      inputSchema: z.object({
+        bd_api_key: z.string().min(1).describe('Bright Data API key (bearer token)'),
+        bd_zone: z.string().optional().describe('Bright Data zone name. Defaults to "web_unlocker1" if not provided.'),
+      }),
+    },
+    async ({ bd_api_key, bd_zone }) => {
+      await keytar.setPassword(KEYTAR_SERVICE, 'bd_api_key', bd_api_key);
+      await keytar.setPassword(KEYTAR_SERVICE, 'bd_zone', bd_zone ?? 'web_unlocker1');
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            success: true,
+            message: 'Bright Data credentials saved. Call get_settings to verify.',
+            zone: bd_zone ?? 'web_unlocker1',
+          }, null, 2),
+        }],
+      };
+    }
+  );
+
   // ── get_settings ───────────────────────────────────────────────────────────
   server.registerTool(
     'get_settings',
@@ -589,9 +615,28 @@ export function startMcpServer(orchestrator: CrawlOrchestrator): http.Server {
     res.end(JSON.stringify({ error: 'Method not allowed' }));
   });
 
-  httpServer.listen(MCP_PORT, '127.0.0.1', () => {
-    console.log(`[MCP] Serpent MCP server running on http://127.0.0.1:${MCP_PORT}/mcp`);
-  });
+  // Retry binding if the port is still in TIME_WAIT from the previous
+  // electronmon-triggered process restart. Retries up to 10 times, 500 ms apart.
+  const MAX_RETRIES = 10;
+  const RETRY_DELAY_MS = 500;
+  let attempt = 0;
+  const tryListen = () => {
+    // Use `once` so listeners don't accumulate across retries.
+    httpServer.once('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE' && attempt < MAX_RETRIES) {
+        attempt++;
+        console.warn(`[MCP] Port ${MCP_PORT} in use, retrying (${attempt}/${MAX_RETRIES})…`);
+        // Wait for the server to fully close before re-attempting listen.
+        httpServer.close(() => setTimeout(tryListen, RETRY_DELAY_MS));
+      } else {
+        console.error(`[MCP] Failed to bind port ${MCP_PORT}:`, err.message);
+      }
+    });
+    httpServer.listen(MCP_PORT, '127.0.0.1', () => {
+      console.log(`[MCP] Serpent MCP server running on http://127.0.0.1:${MCP_PORT}/mcp`);
+    });
+  };
+  tryListen();
 
   return httpServer;
 }
