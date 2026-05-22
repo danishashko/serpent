@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import keytar from 'keytar';
-import { initDatabase, markRunningCrawlsAsInterrupted, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks } from './database';
+import { initDatabase, markRunningCrawlsAsInterrupted, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks, updateLinkStatusCodes } from './database';
+import { checkExternalLinkStatuses } from './external-link-checker';
 import { analyzeGEOBatch } from './geo-analyzer';
 import { analyzePerformanceBatch } from './performance-analyzer';
 import { generatePdfReport } from './report-generator';
@@ -207,6 +208,16 @@ orchestrator.on('complete', (crawlId: string) => {
   addCrawledUrls(count);
   calculateLinkScores(crawlId);
   mainWindow?.webContents.send(IPC.CRAWL_COMPLETE, crawlId);
+
+  // Check external link statuses in the background (non-blocking)
+  checkExternalLinkStatuses(crawlId)
+    .then(statusMap => {
+      if (statusMap.size > 0) {
+        updateLinkStatusCodes(crawlId, statusMap);
+        mainWindow?.webContents.send('crawl:links-updated', crawlId);
+      }
+    })
+    .catch(err => console.error('[EXTERNAL-LINKS] Status check failed:', err));
 });
 
 orchestrator.on('cost-limit-warning', (data: { currentSpend: number; limit: number }) => {

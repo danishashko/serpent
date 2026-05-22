@@ -2,6 +2,7 @@ import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import keytar from 'keytar';
@@ -525,6 +526,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
 
 export function startMcpServer(orchestrator: CrawlOrchestrator): http.Server {
   const sessions = new Map<string, StreamableHTTPServerTransport>();
+  const sseSessions = new Map<string, SSEServerTransport>();
 
   const httpServer = http.createServer(async (req, res) => {
     // DNS rebinding protection
@@ -534,13 +536,44 @@ export function startMcpServer(orchestrator: CrawlOrchestrator): http.Server {
       return;
     }
 
-    if (!req.url?.startsWith('/mcp')) {
+    const urlPath = req.url ?? '/';
+    if (!urlPath.startsWith('/mcp') && !urlPath.startsWith('/sse') && !urlPath.startsWith('/messages')) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
       return;
     }
 
     const method = req.method?.toUpperCase();
+
+    // ── GET /sse: Legacy SSE transport (protocol 2024-11-05) ────────────────
+    if (urlPath.startsWith('/sse') && method === 'GET') {
+      const transport = new SSEServerTransport('/messages', res);
+      sseSessions.set(transport.sessionId, transport);
+      res.on('close', () => sseSessions.delete(transport.sessionId));
+      const mcpServer = buildMcpServer(orchestrator);
+      await mcpServer.connect(transport);
+      return;
+    }
+
+    // ── POST /messages: Legacy SSE messages ─────────────────────────────────
+    if (urlPath.startsWith('/messages') && method === 'POST') {
+      const sessionId = new URLSearchParams(urlPath.split('?')[1] ?? '').get('sessionId');
+      if (!sessionId || !sseSessions.has(sessionId)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+        return;
+      }
+      let body: unknown;
+      try {
+        body = await readBody(req);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+        return;
+      }
+      await sseSessions.get(sessionId)!.handlePostMessage(req, res, body);
+      return;
+    }
 
     // ── POST: new or existing session ──────────────────────────────────────
     if (method === 'POST') {

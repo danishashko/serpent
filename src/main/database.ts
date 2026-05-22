@@ -269,6 +269,9 @@ function createTables(): void {
   for (const ddl of newColumns) {
     try { db.exec(ddl); } catch { /* already exists */ }
   }
+
+  // External link status code — migration for existing DBs
+  try { db.exec('ALTER TABLE links ADD COLUMN status_code INTEGER'); } catch { /* already exists */ }
 }
 
 // ----- Crawl operations -----
@@ -483,9 +486,20 @@ export function insertLinks(links: LinkData[]): void {
 export function getLinksByCrawl(crawlId: string): LinkData[] {
   return db.prepare(`
     SELECT id, crawl_id as crawlId, source_url as sourceUrl, target_url as targetUrl,
-      is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr
+      is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr,
+      status_code as statusCode
     FROM links WHERE crawl_id = ?
   `).all(crawlId) as LinkData[];
+}
+
+export function updateLinkStatusCodes(crawlId: string, statusMap: Map<string, number>): void {
+  const stmt = db.prepare('UPDATE links SET status_code = ? WHERE crawl_id = ? AND target_url = ?');
+  const updateMany = db.transaction(() => {
+    for (const [url, status] of statusMap) {
+      stmt.run(status, crawlId, url);
+    }
+  });
+  updateMany();
 }
 
 // ----- Image operations -----

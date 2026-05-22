@@ -130,7 +130,10 @@ export class CrawlOrchestrator extends EventEmitter {
     insertCrawl(crawlRecord);
 
     const concurrency = config.engine === 'local' ? (config.concurrency || 5) : 20;
-    this.queue = new PQueue({ concurrency, autoStart: true });
+    const rps = config.requestsPerSecond ?? 0;
+    this.queue = rps > 0
+      ? new PQueue({ concurrency, autoStart: true, interval: 1000, intervalCap: rps })
+      : new PQueue({ concurrency, autoStart: true });
 
     if (config.mode === 'spider') {
       this.enqueueUrl(config.startUrl, 0);
@@ -254,7 +257,10 @@ export class CrawlOrchestrator extends EventEmitter {
     updateCrawlStatus(this.crawlId, 'running', this.totalQueued, this.completedCount, this.totalSpend);
 
     const concurrency = config.engine === 'local' ? (config.concurrency || 5) : 20;
-    this.queue = new PQueue({ concurrency, autoStart: true });
+    const rps2 = config.requestsPerSecond ?? 0;
+    this.queue = rps2 > 0
+      ? new PQueue({ concurrency, autoStart: true, interval: 1000, intervalCap: rps2 })
+      : new PQueue({ concurrency, autoStart: true });
 
     // Re-enqueue the start URL — enqueueUrl will skip already-visited
     if (config.mode === 'spider') {

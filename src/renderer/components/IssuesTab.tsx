@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { PageData, IssueCategory, IssueInstance, IssueSeverity } from '../../types/index';
+import { PageData, LinkData, IssueCategory, IssueInstance, IssueSeverity } from '../../types/index';
 import { computeIssues, categoryLabel, getCategories } from '../lib/issues-detector';
 
 interface Props {
   pages: PageData[];
+  links?: LinkData[];
 }
 
 const SEVERITY_ORDER: Record<IssueSeverity, number> = {
@@ -20,7 +21,23 @@ const SEVERITY_COLOR: Record<IssueSeverity, string> = {
   info: '#8b949e',
 };
 
-export default function IssuesTab({ pages }: Props): React.ReactElement {
+// Build a map of targetUrl → source URLs for the inlinks export
+function buildInlinkMap(links: LinkData[]): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const l of links) {
+    if (!m.has(l.targetUrl)) m.set(l.targetUrl, []);
+    m.get(l.targetUrl)!.push(l.sourceUrl);
+  }
+  return m;
+}
+
+function escapeCsvCell(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  return (s.includes(',') || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+export default function IssuesTab({ pages, links = [] }: Props): React.ReactElement {
   const issues = useMemo(() => computeIssues(pages), [pages]);
 
   const byCategory = useMemo(() => {
@@ -53,6 +70,38 @@ export default function IssuesTab({ pages }: Props): React.ReactElement {
   const safeIssue = issuesInCategory.find((i) => i.id === activeIssueId) ?? issuesInCategory[0] ?? null;
 
   const totalAffected = issues.reduce((acc, i) => acc + i.affectedUrls.length, 0);
+
+  const inlinkMap = useMemo(() => buildInlinkMap(links), [links]);
+
+  const handleExportIssue = async () => {
+    if (!safeIssue) return;
+    const isLinkIssue = safeIssue.id === 'client_error_4xx' || safeIssue.id === 'server_error_5xx';
+    let rows: Record<string, unknown>[];
+    if (isLinkIssue) {
+      // Broken URL export: include source pages that link to each broken URL
+      rows = safeIssue.affectedUrls.flatMap(url => {
+        const sources = inlinkMap.get(url) ?? [];
+        if (sources.length === 0) return [{ url, severity: safeIssue.severity, issue: safeIssue.title, source_page: '' }];
+        return sources.map(src => ({ url, severity: safeIssue.severity, issue: safeIssue.title, source_page: src }));
+      });
+    } else {
+      rows = safeIssue.affectedUrls.map(url => ({ url, severity: safeIssue.severity, issue: safeIssue.title }));
+    }
+    const headers = isLinkIssue ? ['url', 'severity', 'issue', 'source_page'] : ['url', 'severity', 'issue'];
+    const lines = [headers.join(','), ...rows.map(r => headers.map(h => escapeCsvCell(r[h])).join(','))];
+    const csv = lines.join('\n');
+    const filename = `issues-${safeIssue.id}-${new Date().toISOString().slice(0, 10)}.csv`;
+    try {
+      await (window as any).api.exportCsv({ rows, filename });
+    } catch {
+      // Fallback: trigger browser download
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+    }
+  };
 
   if (issues.length === 0) {
     return (
@@ -195,13 +244,24 @@ export default function IssuesTab({ pages }: Props): React.ReactElement {
                     background: SEVERITY_COLOR[safeIssue.severity],
                   }}
                 />
-                <h3 style={{ margin: 0, fontSize: 14 }}>{safeIssue.title}</h3>
+                <h3 style={{ margin: 0, fontSize: 14, flex: 1 }}>{safeIssue.title}</h3>
+                <button
+                  className="btn-ghost"
+                  style={{ fontSize: 11, padding: '3px 10px', whiteSpace: 'nowrap' }}
+                  title={`Export ${safeIssue.affectedUrls.length} URLs as CSV`}
+                  onClick={handleExportIssue}
+                >
+                  ↓ Export CSV
+                </button>
               </div>
               <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 {safeIssue.description}
               </p>
               <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
                 {safeIssue.affectedUrls.length} affected URL{safeIssue.affectedUrls.length === 1 ? '' : 's'}
+                {(safeIssue.id === 'client_error_4xx' || safeIssue.id === 'server_error_5xx') && links.length > 0 && (
+                  <span style={{ marginLeft: 8, color: 'var(--accent-blue)' }}>· CSV includes source pages</span>
+                )}
               </p>
             </div>
             <ul

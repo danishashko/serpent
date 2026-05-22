@@ -42,6 +42,8 @@ export interface CrawlConfig {
   customRobotsTxt?: string;
   // User-agent token to match in robots.txt (default: 'Serpent')
   robotsUserAgent?: string;
+  // Rate limiting: max requests per second (0 = unlimited)
+  requestsPerSecond?: number;
 }
 
 export type PageStatus = 'ok' | 'redirect' | 'error' | 'pending';
@@ -108,6 +110,7 @@ export interface LinkData {
   isInternal: boolean;
   anchorText: string | null;
   relAttr: string | null;
+  statusCode?: number | null;
 }
 
 export interface ImageData {

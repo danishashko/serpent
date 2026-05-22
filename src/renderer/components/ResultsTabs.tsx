@@ -979,7 +979,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
 
         {tab === 'issues_v2' && (
           <div style={{ height: '100%', padding: 12 }}>
-            <IssuesTab pages={pages} />
+            <IssuesTab pages={pages} links={links} />
           </div>
         )}
 
@@ -996,11 +996,12 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <th>Anchor Text</th>
                 <th>Type</th>
                 <th>Nofollow</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
               {links.length === 0 ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No links collected yet</td></tr>
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No links collected yet</td></tr>
               ) : (() => {
                 const filteredLinks = links.filter(l => !search || l.sourceUrl.toLowerCase().includes(search.toLowerCase()) || l.targetUrl.toLowerCase().includes(search.toLowerCase()));
                 const capped = filteredLinks.slice(0, MAX_RENDER_ROWS);
@@ -1027,9 +1028,22 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   <td style={{ color: l.relAttr?.includes('nofollow') ? 'var(--accent-orange)' : 'var(--text-muted)', fontSize: 11 }}>
                     {l.relAttr?.includes('nofollow') ? 'nofollow' : ''}
                   </td>
+                  <td style={{ fontSize: 11, textAlign: 'center' }}>
+                    {!l.isInternal && l.statusCode != null ? (
+                      <span style={{
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        background: 'rgba(0,0,0,0.12)',
+                        color: statusColor(l.statusCode),
+                        fontWeight: 600,
+                      }}>{l.statusCode}</span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    )}
+                  </td>
                 </tr>
               ))}{filteredLinks.length > MAX_RENDER_ROWS && (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary, rgba(0,0,0,0.04))' }}>
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary, rgba(0,0,0,0.04))' }}>
                   Showing first {MAX_RENDER_ROWS.toLocaleString()} of {filteredLinks.length.toLocaleString()} rows. Use search to narrow, or Export to get the full dataset.
                 </td></tr>
               )}</>);

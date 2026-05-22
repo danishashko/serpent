@@ -229,6 +229,27 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
         </div>
       </div>
 
+      {/* Rate limit */}
+      <div>
+        <label className="label">Rate Limit (req/s) <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— 0 = unlimited</span></label>
+        <input
+          className="input"
+          type="number"
+          min={0}
+          max={100}
+          step={1}
+          value={config.requestsPerSecond ?? 0}
+          onChange={e => set('requestsPerSecond', Number(e.target.value))}
+          disabled={busy}
+          placeholder="0"
+        />
+        {(config.requestsPerSecond ?? 0) > 0 && (
+          <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+            Crawling at max {config.requestsPerSecond} page{config.requestsPerSecond === 1 ? '' : 's'}/sec — good for sensitive sites
+          </p>
+        )}
+      </div>
+
       {config.engine === 'brightdata' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div>

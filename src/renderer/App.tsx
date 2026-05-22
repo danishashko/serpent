@@ -34,6 +34,7 @@ declare global {
       onCrawlComplete: (cb: (crawlId: string) => void) => void;
       onCostLimit: (cb: (data: unknown) => void) => void;
       onAIProgress: (cb: (data: unknown) => void) => void;
+      onLinksUpdated: (cb: (crawlId: string) => void) => void;
       removeAllListeners: (channel: string) => void;
       getCrawls: () => Promise<CrawlRecord[]>;
       getPages: (crawlId: string) => Promise<PageData[]>;
@@ -203,11 +204,17 @@ export default function App(): React.ReactElement {
       );
     });
 
+    window.api.onLinksUpdated((crawlId: string) => {
+      // External link status check finished — refresh links data silently
+      window.api.getLinks(crawlId).then(l => setLinks(l as LinkData[])).catch(() => {});
+    });
+
     return () => {
       window.api.removeAllListeners('crawl:progress');
       window.api.removeAllListeners('crawl:error');
       window.api.removeAllListeners('crawl:complete');
       window.api.removeAllListeners('crawl:cost-limit');
+      window.api.removeAllListeners('crawl:links-updated');
     };
   }, [showToast, loadCrawlData]);
 
