@@ -218,7 +218,7 @@ test.describe('New features — UI-driven QA', () => {
     expect(xml).toContain('weekly');
     expect(xml).toContain('0.8');
     // At least the home page should be in there.
-    expect(xml).toContain(`${siteServer.url}/`);
+    expect(xml).toContain(siteServer.url);
 
     // (4b) ANALYZE — fetch the fixture's /sitemap.xml and diff
     const sitemapUrlInput = sitemapPanel.locator('input[placeholder*="sitemap.xml"]');

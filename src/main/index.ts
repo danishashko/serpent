@@ -347,22 +347,7 @@ ipcMain.handle(IPC.DATA_EXPORT_CSV, async (_event, data: { rows: Record<string, 
     });
     if (!filePath) return { success: false, cancelled: true };
 
-    const keys = Object.keys(data.rows[0] || {});
-    const header = keys.join(',');
-    const rows = data.rows.map(row =>
-      keys.map(k => {
-        const val = row[k];
-        if (val === null || val === undefined) return '';
-        const str = String(val);
-        // Escape CSV
-        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-          return `"${str.replace(/"/g, '""')}"`;
-        }
-        return str;
-      }).join(',')
-    );
-
-    fs.writeFileSync(filePath, [header, ...rows].join('\n'), 'utf8');
+    fs.writeFileSync(filePath, buildCsvString(data.rows), 'utf8');
     return { success: true, filePath };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -409,7 +394,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
     geminiApiKey: geminiApiKey || null,
     geminiModel: getConfig('gemini_model') || 'gemini-2.0-flash',
     openrouterApiKey: openrouterApiKey || null,
-    openrouterModel: getConfig('openrouter_model') || 'openai/gpt-5.4-mini',
+    openrouterModel: getConfig('openrouter_model') || 'openai/gpt-4o-mini',
     defaultEngine: (getConfig('default_engine') as AppSettings['defaultEngine']) || 'local',
     defaultStorageMode: (getConfig('default_storage_mode') as AppSettings['defaultStorageMode']) || 'database',
   };
@@ -516,7 +501,7 @@ async function buildAIProviderConfig(): Promise<{ config: AIProviderConfig } | {
     case 'openrouter': {
       const key = await keytar.getPassword(KEYTAR_SERVICE, 'openrouter_api_key');
       if (!key) return { error: 'OpenRouter API key not configured. Go to Settings.' };
-      return { config: { provider: 'openrouter', model: getConfig('openrouter_model') || 'openai/gpt-5.4-mini', apiKey: key } };
+      return { config: { provider: 'openrouter', model: getConfig('openrouter_model') || 'openai/gpt-4o-mini', apiKey: key } };
     }
     default:
       return { config: { provider: 'ollama', model: getConfig('ollama_model') || 'llama3', ollamaUrl: getConfig('ollama_url') || 'http://localhost:11434' } };

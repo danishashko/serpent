@@ -60,6 +60,24 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       const resolvedMaxUrls = max_urls ?? 500;
       const resolvedMaxDepth = max_depth ?? 10;
 
+      // SSRF protection: block internal/private network targets for Bright Data mode
+      // (BD proxies the request, so an internal URL would be fetched from Bright Data's infrastructure)
+      if (resolvedEngine === 'brightdata') {
+        try {
+          const u = new URL(url);
+          if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+            return { content: [{ type: 'text' as const, text: 'Invalid URL: only http/https allowed.' }] };
+          }
+          const host = u.hostname.toLowerCase().replace(/\.$/, '');
+          const internalHostRe = /^(localhost|0\.0\.0\.0|::1|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|169\.254\.\d+\.\d+|metadata\.google\.internal)$/i;
+          if (internalHostRe.test(host)) {
+            return { content: [{ type: 'text' as const, text: 'Cannot crawl internal/private network addresses with Bright Data engine.' }] };
+          }
+        } catch {
+          return { content: [{ type: 'text' as const, text: 'Invalid URL provided.' }] };
+        }
+      }
+
       let apiKey: string | null = null;
       let bdZone: string | null = null;
 
@@ -81,7 +99,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         concurrency: 5,
         respectRobots: true,
         followRedirects: true,
-        restrictToSubdomain: true,
+        restrictToSubdomain: false,
         timeout: 30000,
         extractTitles: true,
         extractMeta: true,

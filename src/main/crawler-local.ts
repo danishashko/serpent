@@ -27,8 +27,11 @@ function normalizeUrlForComparison(url: string): string {
 
 function isIndexable(statusCode: number | null, canonical: string | null, pageUrl: string, robotsMeta: string | null): boolean {
   if (!statusCode || statusCode < 200 || statusCode >= 300) return false;
-  if (canonical && !canonical.startsWith('/')) {
-    if (normalizeUrlForComparison(canonical) !== normalizeUrlForComparison(pageUrl)) return false;
+  if (canonical) {
+    // Resolve relative canonicals (e.g. "/path/") against the page URL before comparing
+    let resolvedCanonical = canonical;
+    try { resolvedCanonical = new URL(canonical, pageUrl).toString(); } catch { /* keep raw */ }
+    if (normalizeUrlForComparison(resolvedCanonical) !== normalizeUrlForComparison(pageUrl)) return false;
   }
   if (robotsMeta && (robotsMeta.includes('noindex') || robotsMeta.includes('none'))) return false;
   return true;
@@ -356,7 +359,12 @@ export async function crawlPageLocal(
         if (match) canonicalUrl = match[1];
       }
       if (!canonicalUrl && canonicalLink) canonicalUrl = canonicalLink;
-      isCanonicalized = !!canonicalUrl && normalizeUrlForComparison(canonicalUrl!) !== normalizeUrlForComparison(url);
+      // Resolve relative canonicals (e.g. "/path/") against the page URL before comparing
+      let resolvedCanonical: string | null = canonicalUrl;
+      if (canonicalUrl) {
+        try { resolvedCanonical = new URL(canonicalUrl, url).toString(); } catch { /* keep raw */ }
+      }
+      isCanonicalized = !!resolvedCanonical && normalizeUrlForComparison(resolvedCanonical) !== normalizeUrlForComparison(url);
     }
 
     // Word count + text ratio
