@@ -394,7 +394,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
     geminiApiKey: geminiApiKey || null,
     geminiModel: getConfig('gemini_model') || 'gemini-2.0-flash',
     openrouterApiKey: openrouterApiKey || null,
-    openrouterModel: getConfig('openrouter_model') || 'openai/gpt-4o-mini',
+    openrouterModel: getConfig('openrouter_model') || 'deepseek/deepseek-v4-flash',
     defaultEngine: (getConfig('default_engine') as AppSettings['defaultEngine']) || 'local',
     defaultStorageMode: (getConfig('default_storage_mode') as AppSettings['defaultStorageMode']) || 'database',
   };
@@ -1157,6 +1157,28 @@ ipcMain.handle(IPC.SITEMAP_ANALYZE, async (_event, payload: { crawlId: string; s
       duplicateInSitemap: [],
       errors: [(err as Error).message],
     };
+  }
+});
+
+ipcMain.handle(IPC.SITEMAP_FETCH_URLS, async (_event, sitemapUrl: string) => {
+  if (!isSafeExternalUrl(sitemapUrl)) return { urls: [], error: 'Blocked: internal URL' };
+  try {
+    const xml = await new Promise<string>((resolve, reject) => {
+      const mod = sitemapUrl.startsWith('https') ? require('https') : require('http');
+      mod.get(sitemapUrl, { headers: { 'User-Agent': 'GhostFrog/1.0' } }, (res: import('http').IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        res.on('error', reject);
+      }).on('error', reject);
+    });
+    const urls: string[] = [];
+    const locRe = /<loc>(.*?)<\/loc>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = locRe.exec(xml)) !== null) urls.push(m[1].trim());
+    return { urls };
+  } catch (err) {
+    return { urls: [], error: String(err) };
   }
 });
 

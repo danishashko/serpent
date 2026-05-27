@@ -609,6 +609,7 @@ export const IPC = {
   // Sitemap (XML generation + analysis)
   SITEMAP_GENERATE: 'sitemap:generate',
   SITEMAP_ANALYZE: 'sitemap:analyze',
+  SITEMAP_FETCH_URLS: 'sitemap:fetch-urls',
 
   // Robots.txt tester
   ROBOTS_TEST: 'robots:test',

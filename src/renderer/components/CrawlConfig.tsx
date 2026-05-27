@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { CrawlConfig as CrawlConfigType, CrawlProgress } from '../../types/index';
 
 interface Props {
@@ -7,7 +7,7 @@ interface Props {
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
 }
 
-type CrawlMode = 'spider' | 'list';
+type InputMode = 'spider' | 'list' | 'clipboard' | 'sitemap';
 type CrawlEngine = 'local' | 'brightdata';
 
 const defaultConfig: CrawlConfigType = {
@@ -37,6 +37,10 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
   const [listUrls, setListUrls] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [inputMode, setInputMode] = useState<InputMode>('spider');
+  const [sitemapInputUrl, setSitemapInputUrl] = useState('');
+  const [isFetchingSitemap, setIsFetchingSitemap] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (progress) {
@@ -54,22 +58,61 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
 
   const [isStarting, setIsStarting] = useState(false);
 
+  const handleFileLoad = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const lines = text.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
+      setListUrls(lines.join('\n'));
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsText(file);
+  };
+
+  const handlePasteClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const lines = text.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
+      setListUrls(lines.join('\n'));
+      showToast(`Pasted ${lines.length} URL${lines.length === 1 ? '' : 's'} from clipboard`, 'success');
+    } catch {
+      showToast('Could not read clipboard', 'error');
+    }
+  };
+
+  const handleFetchSitemap = async () => {
+    if (!sitemapInputUrl.trim()) { showToast('Enter a sitemap URL', 'error'); return; }
+    setIsFetchingSitemap(true);
+    try {
+      const result = await window.api.sitemapFetchUrls(sitemapInputUrl.trim());
+      if (result.error) { showToast(result.error, 'error'); return; }
+      setListUrls(result.urls.join('\n'));
+      showToast(`Fetched ${result.urls.length} URL${result.urls.length === 1 ? '' : 's'} from sitemap`, 'success');
+    } catch (e) {
+      showToast(String(e), 'error');
+    } finally {
+      setIsFetchingSitemap(false);
+    }
+  };
+
   const handleStart = async () => {
     if (isStarting) return;
-    if (!config.startUrl && config.mode === 'spider') {
+    if (!config.startUrl && inputMode === 'spider') {
       showToast('Please enter a seed URL', 'error');
       return;
     }
 
     let finalConfig = { ...config };
 
-    if (config.mode === 'list') {
+    if (inputMode !== 'spider') {
       const urls = listUrls.split('\n').map(u => u.trim()).filter(Boolean);
       if (!urls.length) {
         showToast('Please enter at least one URL', 'error');
         return;
       }
-      finalConfig = { ...finalConfig, startUrl: urls[0], urlList: urls };
+      finalConfig = { ...finalConfig, mode: 'list', startUrl: urls[0], urlList: urls };
     }
 
     setIsStarting(true);
@@ -113,31 +156,37 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
       <div>
         <label style={{ display: 'block', marginBottom: 4, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Mode</label>
         <div style={{ display: 'flex', gap: 6 }}>
-          {(['spider', 'list'] as CrawlMode[]).map(m => (
+          {([
+            { id: 'spider', label: '🕷 Spider' },
+            { id: 'list', label: '📋 Paste' },
+            { id: 'clipboard', label: '📎 Clipboard' },
+            { id: 'sitemap', label: '🗺 Sitemap' },
+          ] as { id: InputMode; label: string }[]).map(({ id, label }) => (
             <button
-              key={m}
-              className={`btn-icon ${config.mode === m ? 'active' : ''}`}
+              key={id}
+              className="btn-icon"
               style={{
                 flex: 1,
-                background: config.mode === m ? 'var(--accent-blue)' : 'var(--bg-secondary)',
-                color: config.mode === m ? '#fff' : 'var(--text-secondary)',
-                border: '1px solid ' + (config.mode === m ? 'var(--accent-blue)' : 'var(--border)'),
+                background: inputMode === id ? 'var(--accent-blue)' : 'var(--bg-secondary)',
+                color: inputMode === id ? '#fff' : 'var(--text-secondary)',
+                border: '1px solid ' + (inputMode === id ? 'var(--accent-blue)' : 'var(--border)'),
                 borderRadius: 6,
                 padding: '5px 0',
-                fontSize: 12,
-                fontWeight: config.mode === m ? 600 : 400,
+                fontSize: 11,
+                fontWeight: inputMode === id ? 600 : 400,
                 cursor: 'pointer',
+                whiteSpace: 'nowrap',
               }}
-              onClick={() => set('mode', m)}
+              onClick={() => setInputMode(id)}
               disabled={busy}
             >
-              {m === 'spider' ? '🕷 Spider' : '📋 List'}
+              {label}
             </button>
           ))}
         </div>
       </div>
 
-      {config.mode === 'spider' ? (
+      {inputMode === 'spider' ? (
         <div>
           <label className="label">Seed URL</label>
           <input
@@ -149,7 +198,7 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
             disabled={busy}
           />
         </div>
-      ) : (
+      ) : inputMode === 'list' ? (
         <div>
           <label className="label">URLs (one per line)</label>
           <textarea
@@ -161,6 +210,86 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
             disabled={busy}
             style={{ resize: 'vertical', minHeight: 80, fontFamily: 'monospace', fontSize: 11 }}
           />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <button
+              className="btn-ghost"
+              style={{ fontSize: 11, padding: '3px 10px' }}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy}
+            >
+              📁 Load from file
+            </button>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              {listUrls.split('\n').filter(l => l.trim()).length} URLs
+            </span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.csv,.tsv"
+              style={{ display: 'none' }}
+              onChange={handleFileLoad}
+            />
+          </div>
+        </div>
+      ) : inputMode === 'clipboard' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label className="label">URLs from Clipboard</label>
+          <button
+            className="btn-ghost"
+            style={{ fontSize: 12, padding: '6px 0', alignSelf: 'flex-start', paddingLeft: 12, paddingRight: 12 }}
+            onClick={handlePasteClipboard}
+            disabled={busy}
+          >
+            📎 Paste from Clipboard
+          </button>
+          {listUrls && (
+            <textarea
+              className="input"
+              rows={5}
+              value={listUrls}
+              onChange={e => setListUrls(e.target.value)}
+              disabled={busy}
+              style={{ resize: 'vertical', minHeight: 60, fontFamily: 'monospace', fontSize: 11 }}
+            />
+          )}
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+            {listUrls.split('\n').filter(l => l.trim()).length} URLs loaded
+          </span>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label className="label">Sitemap URL</label>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <input
+              className="input"
+              type="url"
+              placeholder="https://example.com/sitemap.xml"
+              value={sitemapInputUrl}
+              onChange={e => setSitemapInputUrl(e.target.value)}
+              disabled={busy || isFetchingSitemap}
+              style={{ flex: 1 }}
+            />
+            <button
+              className="btn-ghost"
+              style={{ fontSize: 11, padding: '4px 10px', whiteSpace: 'nowrap' }}
+              onClick={handleFetchSitemap}
+              disabled={busy || isFetchingSitemap}
+            >
+              {isFetchingSitemap ? '⏳' : '⬇ Fetch'}
+            </button>
+          </div>
+          {listUrls && (
+            <textarea
+              className="input"
+              rows={5}
+              value={listUrls}
+              readOnly
+              style={{ resize: 'vertical', minHeight: 60, fontFamily: 'monospace', fontSize: 11, opacity: 0.8 }}
+            />
+          )}
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+            {listUrls.split('\n').filter(l => l.trim()).length} URLs fetched
+          </span>
         </div>
       )}
 

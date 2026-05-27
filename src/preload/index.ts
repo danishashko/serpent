@@ -120,6 +120,8 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke(IPC.SITEMAP_GENERATE, opts),
   analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) =>
     ipcRenderer.invoke(IPC.SITEMAP_ANALYZE, payload),
+  sitemapFetchUrls: (sitemapUrl: string) =>
+    ipcRenderer.invoke(IPC.SITEMAP_FETCH_URLS, sitemapUrl),
 
   // License / Monetization
   licenseGet: () => ipcRenderer.invoke(IPC.LICENSE_GET),

@@ -20,7 +20,7 @@ const defaultSettings: AppSettings = {
   geminiApiKey: null,
   geminiModel: 'gemini-2.0-flash',
   openrouterApiKey: null,
-  openrouterModel: 'openai/gpt-5.4-mini',
+  openrouterModel: 'deepseek/deepseek-v4-flash',
   defaultEngine: 'local',
   defaultStorageMode: 'database',
 };

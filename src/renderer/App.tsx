@@ -79,6 +79,7 @@ declare global {
       testRobots: (req: RobotsTestRequest) => Promise<RobotsTestResult>;
       generateSitemap: (opts: SitemapGenerateOptions) => Promise<{ ok: boolean; canceled?: boolean; totalUrls?: number; files?: { filename: string; urlCount: number }[]; written?: string[]; error?: string }>;
       analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) => Promise<SitemapAnalysisResult>;
+      sitemapFetchUrls: (sitemapUrl: string) => Promise<{ urls: string[]; error?: string }>;
       licenseGet: () => Promise<unknown>;
       licenseActivate: (key: string) => Promise<{ success: boolean; error?: string }>;
       licenseDeactivate: () => Promise<{ success: boolean }>;
