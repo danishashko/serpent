@@ -112,7 +112,7 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
         showToast('Please enter at least one URL', 'error');
         return;
       }
-      finalConfig = { ...finalConfig, mode: 'list', startUrl: urls[0], urlList: urls };
+      finalConfig = { ...finalConfig, mode: 'list', startUrl: urls.join('\n'), urlList: urls };
     }
 
     setIsStarting(true);
