@@ -3,7 +3,7 @@
 // `computeIssues()` on the same data; the catalog is the single source of truth
 // for SEO issue definitions, severity, category and detection logic.
 //
-// Categories follow Screaming Frog's taxonomy where reasonable:
+// Categories follow common SEO crawler taxonomy where reasonable:
 //   page_titles, meta_description, headings, canonicals, directives,
 //   response_codes, urls, images, links, security, social, structured_data,
 //   content.

@@ -13,7 +13,7 @@ test.describe('Crawl form validation', () => {
   });
 
   test('list mode requires at least one URL', async ({ window }) => {
-    await window.getByRole('button', { name: /List$/ }).click();
+    await window.getByRole('button', { name: /Paste$/ }).click();
     await window.getByRole('button', { name: /Start Crawl/i }).click();
     await expect(window.getByText(/at least one URL/i)).toBeVisible({ timeout: 5_000 });
   });

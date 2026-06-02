@@ -23,7 +23,7 @@ Without a code signing certificate, Windows SmartScreen shows a warning when use
 3. Fill it out with:
    - **Project URL**: `https://github.com/danishashko/serpent`
    - **License**: MIT
-   - **Description**: AI-native local SEO spider — free Screaming Frog alternative
+   - **Description**: AI-native local SEO spider — a free, open-source technical SEO crawler
 4. Email the completed form to `oss-support@signpath.org`
 5. Wait for approval (typically a few business days)
 

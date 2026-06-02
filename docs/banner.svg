@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" fill="none" role="img" aria-label="Serpent — AI-native SEO spider for technical audits">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b0d13"/>
+      <stop offset="0.55" stop-color="#0f1117"/>
+      <stop offset="1" stop-color="#141826"/>
+    </linearGradient>
+    <linearGradient id="word" x1="120" y1="120" x2="760" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2ed573"/>
+      <stop offset="0.5" stop-color="#00cec9"/>
+      <stop offset="1" stop-color="#4c85ff"/>
+    </linearGradient>
+    <linearGradient id="snake" x1="900" y1="40" x2="1240" y2="340" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2ed573"/>
+      <stop offset="1" stop-color="#00cec9"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#2ed573" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#2ed573" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="360" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="360" rx="20" fill="url(#grid)"/>
+  <circle cx="1050" cy="190" r="280" fill="url(#glow)"/>
+
+  <!-- Stylised crawling snake / link graph on the right -->
+  <g stroke="url(#snake)" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.9">
+    <path d="M880 250 C 960 250, 960 130, 1040 130 S 1120 250, 1200 250"/>
+    <path d="M905 300 C 985 300, 985 90, 1065 90 S 1145 300, 1225 300" opacity="0.45"/>
+  </g>
+  <g fill="#2ed573">
+    <circle cx="880" cy="250" r="9"/>
+    <circle cx="1040" cy="130" r="9" fill="#00cec9"/>
+    <circle cx="1200" cy="250" r="9" fill="#4c85ff"/>
+  </g>
+  <g fill="#ffffff" fill-opacity="0.85">
+    <circle cx="960" cy="190" r="4"/>
+    <circle cx="1120" cy="190" r="4"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="96" y="150" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="92" font-weight="800" fill="url(#word)" letter-spacing="-2">Serpent</text>
+  <text x="100" y="206" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="600" fill="#e6eaf2">AI-native SEO spider for technical audits</text>
+  <text x="100" y="244" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" font-weight="400" fill="#8b92a6">Free &amp; open-source desktop crawler — reimagined with your favourite LLM.</text>
+
+  <!-- Pills -->
+  <g font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600">
+    <g>
+      <rect x="100" y="280" width="138" height="34" rx="17" fill="#161a26" stroke="#2ed57333"/>
+      <text x="169" y="302" fill="#2ed573" text-anchor="middle">Multi-LLM</text>
+    </g>
+    <g>
+      <rect x="250" y="280" width="150" height="34" rx="17" fill="#161a26" stroke="#00cec933"/>
+      <text x="325" y="302" fill="#00cec9" text-anchor="middle">Unlimited URLs</text>
+    </g>
+    <g>
+      <rect x="412" y="280" width="120" height="34" rx="17" fill="#161a26" stroke="#4c85ff33"/>
+      <text x="472" y="302" fill="#4c85ff" text-anchor="middle">MCP server</text>
+    </g>
+    <g>
+      <rect x="544" y="280" width="112" height="34" rx="17" fill="#161a26" stroke="#a29bfe33"/>
+      <text x="600" y="302" fill="#a29bfe" text-anchor="middle">100% local</text>
+    </g>
+  </g>
+</svg>

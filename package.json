@@ -1,7 +1,7 @@
 {
   "name": "serpent",
-  "version": "1.0.3",
-  "description": "AI-native local SEO spider — free Screaming Frog alternative",
+  "version": "1.0.4",
+  "description": "AI-native local SEO spider — a free, open-source technical SEO crawler",
   "main": "dist/main/index.js",
   "scripts": {
     "dev:renderer": "vite",
@@ -28,7 +28,7 @@
     "crawler",
     "spider",
     "electron",
-    "screaming-frog-alternative"
+    "seo-audit"
   ],
   "author": "Daniel Shashko <daniel@organikpi.com>",
   "license": "MIT",

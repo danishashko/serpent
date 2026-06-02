@@ -53,6 +53,24 @@ export class CrawlOrchestrator extends EventEmitter {
   private robotsRules: RobotsRuleSet | null = null;
   private robotsUserAgent: string = 'Serpent';
 
+  // Rate limiting: minimum spacing (ms) between request starts. 0 = unlimited.
+  // We enforce this with an atomic "slot reservation" gate rather than p-queue's
+  // intervalCap, which has an idle-event race that can end a crawl prematurely
+  // when the first task runs before its siblings are enqueued.
+  private minRequestIntervalMs = 0;
+  private nextRequestSlot = 0;
+
+  private async rateLimitGate(): Promise<void> {
+    if (this.minRequestIntervalMs <= 0) return;
+    const now = Date.now();
+    // Reserve the next available slot synchronously so concurrent callers get
+    // distinct, monotonically-spaced start times regardless of concurrency.
+    const slot = Math.max(now, this.nextRequestSlot);
+    this.nextRequestSlot = slot + this.minRequestIntervalMs;
+    const wait = slot - now;
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  }
+
   private async loadRobots(origin: string, customBody: string | undefined): Promise<void> {
     // Custom robots.txt overrides any HTTP fetch (used by tests + advanced mode).
     if (typeof customBody === 'string' && customBody.length > 0) {
@@ -105,7 +123,12 @@ export class CrawlOrchestrator extends EventEmitter {
     this.apiKey = apiKey || null;
     this.bdZone = bdZone || 'web_unlocker1';
 
-    const baseUrl = new URL(config.startUrl);
+    // In list mode startUrl is a newline-separated list; derive the base origin
+    // from the first URL only (spider mode uses the single seed URL).
+    const firstUrl = config.mode === 'spider'
+      ? config.startUrl
+      : (config.startUrl.split('\n').map(u => u.trim()).filter(Boolean)[0] ?? config.startUrl);
+    const baseUrl = new URL(firstUrl);
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
     this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'Serpent';
@@ -131,9 +154,12 @@ export class CrawlOrchestrator extends EventEmitter {
 
     const concurrency = config.engine === 'local' ? (config.concurrency || 5) : 20;
     const rps = config.requestsPerSecond ?? 0;
-    this.queue = rps > 0
-      ? new PQueue({ concurrency, autoStart: true, interval: 1000, intervalCap: rps })
-      : new PQueue({ concurrency, autoStart: true });
+    // Rate limiting is enforced per-request via rateLimitGate(), not via
+    // p-queue's intervalCap (which has an idle-event race). The queue only
+    // governs concurrency here.
+    this.minRequestIntervalMs = rps > 0 ? 1000 / rps : 0;
+    this.nextRequestSlot = 0;
+    this.queue = new PQueue({ concurrency, autoStart: true });
 
     if (config.mode === 'spider') {
       this.enqueueUrl(config.startUrl, 0);
@@ -237,7 +263,10 @@ export class CrawlOrchestrator extends EventEmitter {
     this.apiKey = apiKey || null;
     this.bdZone = bdZone || 'web_unlocker1';
 
-    const baseUrl = new URL(config.startUrl);
+    const firstUrl = config.mode === 'spider'
+      ? config.startUrl
+      : (config.startUrl.split('\n').map(u => u.trim()).filter(Boolean)[0] ?? config.startUrl);
+    const baseUrl = new URL(firstUrl);
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
     this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'Serpent';
@@ -258,9 +287,9 @@ export class CrawlOrchestrator extends EventEmitter {
 
     const concurrency = config.engine === 'local' ? (config.concurrency || 5) : 20;
     const rps2 = config.requestsPerSecond ?? 0;
-    this.queue = rps2 > 0
-      ? new PQueue({ concurrency, autoStart: true, interval: 1000, intervalCap: rps2 })
-      : new PQueue({ concurrency, autoStart: true });
+    this.minRequestIntervalMs = rps2 > 0 ? 1000 / rps2 : 0;
+    this.nextRequestSlot = 0;
+    this.queue = new PQueue({ concurrency, autoStart: true });
 
     // Re-enqueue the start URL — enqueueUrl will skip already-visited
     if (config.mode === 'spider') {
@@ -293,24 +322,28 @@ export class CrawlOrchestrator extends EventEmitter {
   }
 
   private enqueueUrl(url: string, depth: number): void {
-    if (!this.config) { console.log('[CRAWL-DBG] enqueueUrl: no config'); return; }
-    if (this.visited.has(url) || this.pending.has(url)) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (already seen): ${url}`); return; }
-    if (this.config.maxUrls > 0 && this.totalQueued >= this.config.maxUrls) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (maxUrls ${this.config.maxUrls} reached): ${url}`); return; }
-    if (this.config.maxDepth > 0 && depth > this.config.maxDepth) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (maxDepth ${this.config.maxDepth}, depth ${depth}): ${url}`); return; }
+    if (!this.config) return;
+    if (this.visited.has(url) || this.pending.has(url)) return;
+    if (this.config.maxUrls > 0 && this.totalQueued >= this.config.maxUrls) return;
+    if (this.config.maxDepth > 0 && depth > this.config.maxDepth) return;
 
     // Scope check
     try {
       const parsed = new URL(url);
-      if (parsed.origin !== this.baseOrigin) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (origin mismatch: ${parsed.origin} vs ${this.baseOrigin}): ${url}`); return; }
+      // Spider mode is restricted to the seed origin so the crawl can't wander
+      // off-site. List mode (paste / clipboard / file / sitemap) must crawl the
+      // exact URLs the user supplied — even across different domains — so the
+      // origin restriction is skipped there.
+      if (this.config.mode === 'spider' && parsed.origin !== this.baseOrigin) return;
 
-      // robots.txt check
-      if (this.robotsRules && !checkPath(parsed.pathname + (parsed.search || ''), this.robotsRules).allowed) { console.log(`[CRAWL-DBG] enqueueUrl SKIP (robots): ${url}`); return; }
+      // robots.txt check — only applied when the URL is on the seed origin, since
+      // robots rules were fetched for baseOrigin only. Cross-domain list URLs are
+      // crawled as-supplied (one origin's robots can't govern another domain).
+      if (this.robotsRules && parsed.origin === this.baseOrigin && !checkPath(parsed.pathname + (parsed.search || ''), this.robotsRules).allowed) return;
     } catch {
-      console.log(`[CRAWL-DBG] enqueueUrl SKIP (URL parse error): ${url}`);
       return;
     }
 
-    console.log(`[CRAWL-DBG] enqueueUrl OK depth=${depth}: ${url}`);
     this.pending.add(url);
     this.totalQueued++;
     this.queue!.add(() => this.processUrl(url, depth));
@@ -345,7 +378,9 @@ export class CrawlOrchestrator extends EventEmitter {
     }
 
     this.emit('url-start', url);
-    console.log(`[CRAWL-DBG] processUrl START depth=${depth}: ${url}`);
+
+    // Pace request starts when a rate limit is configured.
+    await this.rateLimitGate();
 
     try {
       let result: Awaited<ReturnType<typeof crawlPageLocal>>;
@@ -371,10 +406,6 @@ export class CrawlOrchestrator extends EventEmitter {
       }
 
       // Spider mode: enqueue discovered URLs FIRST (before DB ops that might fail)
-      console.log(`[CRAWL-DBG] processUrl DONE: ${url} | discovered=${result.discoveredUrls.length} links=${result.links.length} status=${result.page.statusCode} mode=${this.config.mode}`);
-      if (result.discoveredUrls.length > 0) {
-        console.log(`[CRAWL-DBG] First 5 discovered:`, result.discoveredUrls.slice(0, 5));
-      }
       if (this.config.mode === 'spider') {
         for (const discoveredUrl of result.discoveredUrls) {
           this.enqueueUrl(discoveredUrl, depth + 1);
@@ -439,7 +470,6 @@ export class CrawlOrchestrator extends EventEmitter {
 
       this.emitProgress(url);
     } catch (err) {
-      console.error(`[CRAWL-DBG] processUrl ERROR: ${url}`, err);
       this.emit('url-error', { url, error: err });
       this.completedCount++;
       this.emitProgress(url);
