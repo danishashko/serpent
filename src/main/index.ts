@@ -7,7 +7,7 @@ import { analyzeGEOBatch } from './geo-analyzer';
 import { analyzePerformanceBatch } from './performance-analyzer';
 import { generatePdfReport } from './report-generator';
 import { CrawlOrchestrator } from './crawler-orchestrator';
-import { testBrightDataConnection } from './crawler-brightdata';
+import { testBrightDataConnection, testBrightDataBrowserConnection } from './crawler-brightdata';
 import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO, analyzeIssueGroup, testAIProviderConnection, AIProviderConfig } from './ai-analyzer';
 import { querySerpBatch, storeSerpResults, getSerpResults } from './serp-client';
 import { discoverCompetitors, discoverContentGaps, getDiscoverResults, getContentGaps } from './discover-client';
@@ -237,6 +237,7 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
 
     let apiKey: string | null = null;
     let bdZone: string | null = null;
+    let bdBrowserAuth: string | null = null;
 
     if (config.engine === 'brightdata') {
       // BrightData proxies requests via external servers — block internal IPs to prevent SSRF
@@ -248,9 +249,18 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
       if (!apiKey) {
         return { success: false, error: 'Bright Data API key not configured. Go to Settings.' };
       }
+    } else if (config.engine === 'brightdata-browser') {
+      // Browser API also proxies via external servers — block internal IPs to prevent SSRF
+      if (!isSafeExternalUrl(config.startUrl)) {
+        return { success: false, error: 'Invalid start URL. Must be a public http/https address.' };
+      }
+      bdBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
+      if (!bdBrowserAuth) {
+        return { success: false, error: 'Bright Data Browser API credentials not configured. Go to Settings.' };
+      }
     }
 
-    const crawlId = await orchestrator.startCrawl(config, apiKey || undefined, bdZone || undefined);
+    const crawlId = await orchestrator.startCrawl(config, apiKey || undefined, bdZone || undefined, bdBrowserAuth || undefined);
     return { success: true, crawlId };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -288,6 +298,7 @@ ipcMain.handle(IPC.CRAWL_RESUME_INCOMPLETE, async () => {
   try {
     let apiKey: string | null = null;
     let bdZone: string | null = null;
+    let bdBrowserAuth: string | null = null;
 
     const incomplete = orchestrator.getIncompleteCrawl();
     if (!incomplete) return { success: false, error: 'No incomplete crawl found' };
@@ -296,9 +307,11 @@ ipcMain.handle(IPC.CRAWL_RESUME_INCOMPLETE, async () => {
     if (config.engine === 'brightdata') {
       apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
       bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+    } else if (config.engine === 'brightdata-browser') {
+      bdBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
     }
 
-    const crawlId = await orchestrator.resumeIncompleteCrawl(apiKey || undefined, bdZone || undefined);
+    const crawlId = await orchestrator.resumeIncompleteCrawl(apiKey || undefined, bdZone || undefined, bdBrowserAuth || undefined);
     return { success: true, crawlId };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -374,6 +387,7 @@ ipcMain.handle(IPC.DATA_EXPORT_JSON, async (_event, data: { rows: Record<string,
 ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
   const bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+  const bdBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
   const openaiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key');
   const anthropicApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'anthropic_api_key');
   const geminiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key');
@@ -382,6 +396,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const settings: AppSettings = {
     brightDataApiKey: apiKey || null,
     brightDataZone: bdZone || 'web_unlocker1',
+    brightDataBrowserAuth: bdBrowserAuth || null,
     maxCostPerCrawl: parseFloat(getConfig('max_cost_per_crawl') || '10'),
     maxCostPerDay: parseFloat(getConfig('max_cost_per_day') || '50'),
     aiProvider: (getConfig('ai_provider') as AIProvider) || 'ollama',
@@ -413,6 +428,13 @@ ipcMain.handle(IPC.SETTINGS_SAVE, async (_event, settings: Partial<AppSettings>)
     }
     if (settings.brightDataZone !== undefined) {
       await keytar.setPassword(KEYTAR_SERVICE, 'bd_zone', settings.brightDataZone || 'web_unlocker1');
+    }
+    if (settings.brightDataBrowserAuth !== undefined) {
+      if (settings.brightDataBrowserAuth) {
+        await keytar.setPassword(KEYTAR_SERVICE, 'bd_browser_auth', settings.brightDataBrowserAuth);
+      } else {
+        await keytar.deletePassword(KEYTAR_SERVICE, 'bd_browser_auth').catch(() => {});
+      }
     }
     if (settings.maxCostPerCrawl !== undefined) setConfig('max_cost_per_crawl', String(settings.maxCostPerCrawl));
     if (settings.maxCostPerDay !== undefined) setConfig('max_cost_per_day', String(settings.maxCostPerDay));
@@ -462,6 +484,11 @@ ipcMain.handle(IPC.SETTINGS_SAVE, async (_event, settings: Partial<AppSettings>)
 
 ipcMain.handle(IPC.SETTINGS_TEST_BD, async (_event, apiKey: string, zone: string) => {
   const ok = await testBrightDataConnection(apiKey, zone);
+  return { success: ok };
+});
+
+ipcMain.handle(IPC.SETTINGS_TEST_BD_BROWSER, async (_event, auth: string) => {
+  const ok = await testBrightDataBrowserConnection(auth);
   return { success: ok };
 });
 

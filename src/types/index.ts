@@ -1,6 +1,6 @@
 // Shared types across main and renderer processes
 
-export type CrawlEngine = 'local' | 'brightdata';
+export type CrawlEngine = 'local' | 'brightdata' | 'brightdata-browser';
 export type CrawlMode = 'spider' | 'list';
 export type CrawlStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
 export type StorageMode = 'memory' | 'database';
@@ -227,6 +227,8 @@ export interface UsageLog {
 export interface AppSettings {
   brightDataApiKey: string | null;
   brightDataZone: string | null;
+  /** Browser API credentials in "USER:PASS" form (for JS rendering of SPAs) */
+  brightDataBrowserAuth: string | null;
   maxCostPerCrawl: number;
   /** Alias for maxCostPerCrawl used by UI */
   costLimitUsd?: number;
@@ -553,6 +555,7 @@ export const IPC = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SAVE: 'settings:save',
   SETTINGS_TEST_BD: 'settings:test-brightdata',
+  SETTINGS_TEST_BD_BROWSER: 'settings:test-brightdata-browser',
   SETTINGS_TEST_OLLAMA: 'settings:test-ollama',
   SETTINGS_TEST_AI_PROVIDER: 'settings:test-ai-provider',
 

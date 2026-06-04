@@ -8,7 +8,7 @@ interface Props {
 }
 
 type InputMode = 'spider' | 'list' | 'clipboard' | 'sitemap';
-type CrawlEngine = 'local' | 'brightdata';
+type CrawlEngine = 'local' | 'brightdata' | 'brightdata-browser';
 
 const defaultConfig: CrawlConfigType = {
   startUrl: '',
@@ -297,30 +297,52 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
       <div>
         <label className="label" style={{ marginBottom: 6 }}>Crawl Engine</label>
         <div style={{ display: 'flex', gap: 6 }}>
-          {(['local', 'brightdata'] as CrawlEngine[]).map(e => (
-            <button
-              key={e}
-              style={{
-                flex: 1,
-                padding: '6px 0',
-                fontSize: 11,
-                fontWeight: 500,
-                border: '1px solid ' + (config.engine === e ? (e === 'brightdata' ? 'var(--accent-orange)' : 'var(--accent-green)') : 'var(--border)'),
-                borderRadius: 6,
-                background: config.engine === e ? (e === 'brightdata' ? 'rgba(255,140,50,0.12)' : 'rgba(46,213,115,0.12)') : 'var(--bg-secondary)',
-                color: config.engine === e ? (e === 'brightdata' ? 'var(--accent-orange)' : 'var(--accent-green)') : 'var(--text-secondary)',
-                cursor: 'pointer',
-              }}
-              onClick={() => set('engine', e)}
-              disabled={busy}
-            >
-              {e === 'local' ? '🔧 Local' : '☁️ Bright Data'}
-            </button>
-          ))}
+          {(['local', 'brightdata', 'brightdata-browser'] as CrawlEngine[]).map(e => {
+            const accent = e === 'local'
+              ? 'var(--accent-green)'
+              : e === 'brightdata-browser'
+                ? '#3b82f6'
+                : 'var(--accent-orange)';
+            const bg = e === 'local'
+              ? 'rgba(46,213,115,0.12)'
+              : e === 'brightdata-browser'
+                ? 'rgba(59,130,246,0.12)'
+                : 'rgba(255,140,50,0.12)';
+            const label = e === 'local'
+              ? '🔧 Local'
+              : e === 'brightdata-browser'
+                ? '🌐 JS Browser'
+                : '☁️ Web Unlocker';
+            return (
+              <button
+                key={e}
+                style={{
+                  flex: 1,
+                  padding: '6px 0',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  border: '1px solid ' + (config.engine === e ? accent : 'var(--border)'),
+                  borderRadius: 6,
+                  background: config.engine === e ? bg : 'var(--bg-secondary)',
+                  color: config.engine === e ? accent : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                }}
+                onClick={() => set('engine', e)}
+                disabled={busy}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
         {config.engine === 'brightdata' && (
           <p style={{ fontSize: 10, color: 'var(--accent-orange)', marginTop: 4 }}>
             ~$1.00/1,000 pages · Set API key in Settings
+          </p>
+        )}
+        {config.engine === 'brightdata-browser' && (
+          <p style={{ fontSize: 10, color: '#3b82f6', marginTop: 4 }}>
+            Renders JS/SPAs · ~$8/GB · Set Browser API credentials in Settings
           </p>
         )}
         {config.engine === 'local' && (
@@ -403,6 +425,21 @@ export default function CrawlConfig({ progress, onCrawlStart, showToast }: Props
               disabled={busy}
             />
           </div>
+        </div>
+      )}
+
+      {config.engine === 'brightdata-browser' && (
+        <div>
+          <label className="label">Cost Limit ($)</label>
+          <input
+            className="input"
+            type="number"
+            min={0.01}
+            step={0.5}
+            value={config.maxCostUsd}
+            onChange={e => set('maxCostUsd', Number(e.target.value))}
+            disabled={busy}
+          />
         </div>
       )}
 

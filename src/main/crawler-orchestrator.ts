@@ -13,7 +13,7 @@ import {
   CustomExtractionResult,
 } from '../types/index';
 import { crawlPageLocal } from './crawler-local';
-import { crawlPageBrightData } from './crawler-brightdata';
+import { crawlPageBrightData, crawlPageBrightDataBrowser } from './crawler-brightdata';
 import { CostTracker } from './cost-tracker';
 import {
   insertCrawl,
@@ -50,6 +50,7 @@ export class CrawlOrchestrator extends EventEmitter {
   private startTime = 0;
   private apiKey: string | null = null;
   private bdZone: string = 'web_unlocker1';
+  private bdBrowserAuth: string | null = null;
   private robotsRules: RobotsRuleSet | null = null;
   private robotsUserAgent: string = 'Serpent';
 
@@ -92,7 +93,7 @@ export class CrawlOrchestrator extends EventEmitter {
     }
   }
 
-  async startCrawl(config: CrawlConfig, apiKey?: string, bdZone?: string): Promise<string> {
+  async startCrawl(config: CrawlConfig, apiKey?: string, bdZone?: string, bdBrowserAuth?: string): Promise<string> {
     if (this.status === 'running') {
       // Only refuse if there's actual work in flight. If the in-memory state got stuck
       // (e.g. a previous resume that never reached idle), reset and proceed.
@@ -122,6 +123,7 @@ export class CrawlOrchestrator extends EventEmitter {
     this.startTime = Date.now();
     this.apiKey = apiKey || null;
     this.bdZone = bdZone || 'web_unlocker1';
+    this.bdBrowserAuth = bdBrowserAuth || null;
 
     // In list mode startUrl is a newline-separated list; derive the base origin
     // from the first URL only (spider mode uses the single seed URL).
@@ -152,7 +154,11 @@ export class CrawlOrchestrator extends EventEmitter {
 
     insertCrawl(crawlRecord);
 
-    const concurrency = config.engine === 'local' ? (config.concurrency || 5) : 20;
+    const concurrency = config.engine === 'local'
+      ? (config.concurrency || 5)
+      : config.engine === 'brightdata-browser'
+        ? 5
+        : 20;
     const rps = config.requestsPerSecond ?? 0;
     // Rate limiting is enforced per-request via rateLimitGate(), not via
     // p-queue's intervalCap (which has an idle-event race). The queue only
@@ -247,7 +253,7 @@ export class CrawlOrchestrator extends EventEmitter {
   }
 
   /** Resume an incomplete crawl from where it left off */
-  async resumeIncompleteCrawl(apiKey?: string, bdZone?: string): Promise<string | null> {
+  async resumeIncompleteCrawl(apiKey?: string, bdZone?: string, bdBrowserAuth?: string): Promise<string | null> {
     const incomplete = getLatestIncompleteCrawl();
     if (!incomplete) return null;
 
@@ -262,6 +268,7 @@ export class CrawlOrchestrator extends EventEmitter {
     this.startTime = Date.now();
     this.apiKey = apiKey || null;
     this.bdZone = bdZone || 'web_unlocker1';
+    this.bdBrowserAuth = bdBrowserAuth || null;
 
     const firstUrl = config.mode === 'spider'
       ? config.startUrl
@@ -285,7 +292,11 @@ export class CrawlOrchestrator extends EventEmitter {
 
     updateCrawlStatus(this.crawlId, 'running', this.totalQueued, this.completedCount, this.totalSpend);
 
-    const concurrency = config.engine === 'local' ? (config.concurrency || 5) : 20;
+    const concurrency = config.engine === 'local'
+      ? (config.concurrency || 5)
+      : config.engine === 'brightdata-browser'
+        ? 5
+        : 20;
     const rps2 = config.requestsPerSecond ?? 0;
     this.minRequestIntervalMs = rps2 > 0 ? 1000 / rps2 : 0;
     this.nextRequestSlot = 0;
@@ -353,8 +364,8 @@ export class CrawlOrchestrator extends EventEmitter {
     if (!this.config) return;
     if (this.status === 'paused') return;
 
-    // Check cost limit before fetching (BD mode)
-    if (this.config.engine === 'brightdata' && this.config.maxCostUsd > 0) {
+    // Check cost limit before fetching (paid engines)
+    if (this.config.engine !== 'local' && this.config.maxCostUsd > 0) {
       const estimatedCost = CostTracker.costPerRequest();
       if (this.totalSpend + estimatedCost > this.config.maxCostUsd * 0.95) {
         this.queue?.pause();
@@ -387,6 +398,21 @@ export class CrawlOrchestrator extends EventEmitter {
 
       if (this.config.engine === 'local') {
         result = await crawlPageLocal(url, this.crawlId, depth, this.config, this.baseOrigin);
+      } else if (this.config.engine === 'brightdata-browser') {
+        if (!this.bdBrowserAuth) {
+          this.emit('error', new Error('Bright Data Browser API credentials not configured'));
+          return;
+        }
+        const bdResult = await crawlPageBrightDataBrowser(
+          url,
+          this.crawlId,
+          depth,
+          this.config,
+          this.baseOrigin,
+          this.bdBrowserAuth
+        );
+        this.totalSpend += bdResult.page.costUsd;
+        result = bdResult;
       } else {
         if (!this.apiKey) {
           this.emit('error', new Error('Bright Data API key not configured'));

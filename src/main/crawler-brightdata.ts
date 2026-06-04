@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { chromium, Browser } from 'playwright-core';
 import { URL } from 'url';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
@@ -66,6 +67,38 @@ export async function crawlPageBrightData(
     statusCode = 0;
   }
 
+  return buildResultFromHtml(html, url, crawlId, depth, config, baseOrigin, {
+    statusCode,
+    contentType,
+    responseTimeMs,
+    pageSizeBytes,
+    costUsd: calculateBrightDataCost(),
+  });
+}
+
+interface ParseMeta {
+  statusCode: number | null;
+  contentType: string | null;
+  responseTimeMs: number | null;
+  pageSizeBytes: number;
+  costUsd: number;
+}
+
+/**
+ * Shared HTML → SEO result parser. Used by both the Web Unlocker (raw HTML)
+ * and the Browser API (JS-rendered HTML) crawlers so extraction stays identical
+ * regardless of how the markup was fetched.
+ */
+function buildResultFromHtml(
+  html: string,
+  url: string,
+  crawlId: string,
+  depth: number,
+  config: CrawlConfig,
+  baseOrigin: string,
+  meta: ParseMeta
+): CrawlResult & { bytesDownloaded: number } {
+  const { statusCode, contentType, responseTimeMs, pageSizeBytes } = meta;
   const pageId = uuidv4();
   const links: LinkData[] = [];
   const images: ImageData[] = [];
@@ -306,7 +339,7 @@ export async function crawlPageBrightData(
     return true;
   })();
 
-  const costUsd = calculateBrightDataCost();
+  const costUsd = meta.costUsd;
 
   const page: PageData = {
     id: pageId,
@@ -384,5 +417,101 @@ export async function testBrightDataConnection(apiKey: string, zone: string): Pr
     return response.status === 200;
   } catch {
     return false;
+  }
+}
+
+const BD_BROWSER_HOST = 'brd.superproxy.io:9222';
+
+/**
+ * Bright Data Browser API (Scraping Browser) cost estimate.
+ * Browser API bills per GB of traffic (~$8/GB). We approximate per page from
+ * the rendered HTML size, with a small floor so blocked/empty pages still
+ * register a non-zero spend.
+ */
+export function calculateBrightDataBrowserCost(bytesDownloaded: number): number {
+  const GB = 1024 * 1024 * 1024;
+  const PRICE_PER_GB = 8.0;
+  const est = (bytesDownloaded / GB) * PRICE_PER_GB;
+  return Math.max(est, 0.002);
+}
+
+/**
+ * Crawl a single page through Bright Data's Browser API (Scraping Browser).
+ * Connects to a remote headful Chromium over CDP, fully renders JS/SPA content,
+ * then reuses the shared parser. `auth` is the zone "USER:PASS" string.
+ */
+export async function crawlPageBrightDataBrowser(
+  url: string,
+  crawlId: string,
+  depth: number,
+  config: CrawlConfig,
+  baseOrigin: string,
+  auth: string
+): Promise<CrawlResult & { bytesDownloaded: number }> {
+  const startTime = Date.now();
+  const endpoint = `wss://${auth}@${BD_BROWSER_HOST}`;
+
+  let statusCode: number | null = null;
+  let contentType: string | null = null;
+  let html = '';
+  let responseTimeMs: number | null = null;
+  let browser: Browser | null = null;
+
+  try {
+    browser = await chromium.connectOverCDP(endpoint, { timeout: 60000 });
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+    const page = await context.newPage();
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
+    statusCode = response?.status() ?? null;
+    if (response) {
+      const headers = await response.allHeaders();
+      contentType = headers['content-type'] ?? 'text/html';
+    }
+    html = await page.content();
+    responseTimeMs = Date.now() - startTime;
+  } catch {
+    responseTimeMs = Date.now() - startTime;
+    statusCode = statusCode ?? 0;
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const pageSizeBytes = Buffer.byteLength(html, 'utf8');
+  return buildResultFromHtml(html, url, crawlId, depth, config, baseOrigin, {
+    statusCode,
+    contentType,
+    responseTimeMs,
+    pageSizeBytes,
+    costUsd: calculateBrightDataBrowserCost(pageSizeBytes),
+  });
+}
+
+/** Validate Browser API credentials by opening a remote session and loading a page. */
+export async function testBrightDataBrowserConnection(auth: string): Promise<boolean> {
+  if (!auth || !auth.includes(':')) return false;
+  const endpoint = `wss://${auth}@${BD_BROWSER_HOST}`;
+  let browser: Browser | null = null;
+  try {
+    browser = await chromium.connectOverCDP(endpoint, { timeout: 30000 });
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+    const page = await context.newPage();
+    await page.goto('https://example.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }

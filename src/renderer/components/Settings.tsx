@@ -8,6 +8,7 @@ interface Props {
 const defaultSettings: AppSettings = {
   brightDataApiKey: null,
   brightDataZone: 'web_unlocker1',
+  brightDataBrowserAuth: null,
   maxCostPerCrawl: 5.0,
   maxCostPerDay: 20.0,
   aiProvider: 'ollama',
@@ -38,11 +39,14 @@ export default function Settings({ showToast }: Props): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingBd, setTestingBd] = useState(false);
+  const [testingBdBrowser, setTestingBdBrowser] = useState(false);
   const [testingAI, setTestingAI] = useState(false);
   const [bdStatus, setBdStatus] = useState<'untested' | 'ok' | 'fail'>('untested');
+  const [bdBrowserStatus, setBdBrowserStatus] = useState<'untested' | 'ok' | 'fail'>('untested');
   const [aiStatus, setAiStatus] = useState<'untested' | 'ok' | 'fail'>('untested');
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [showBdKey, setShowBdKey] = useState(false);
+  const [showBdBrowserAuth, setShowBdBrowserAuth] = useState(false);
   const [showAiKey, setShowAiKey] = useState(false);
 
   useEffect(() => {
@@ -85,6 +89,22 @@ export default function Settings({ showToast }: Props): React.ReactElement {
       showToast(result.success ? 'Bright Data connection OK!' : 'Bright Data connection failed', result.success ? 'success' : 'error');
     } finally {
       setTestingBd(false);
+    }
+  };
+
+  const handleTestBdBrowser = async () => {
+    if (!settings.brightDataBrowserAuth || !settings.brightDataBrowserAuth.includes(':')) {
+      showToast('Enter Browser API credentials as USER:PASS', 'error');
+      return;
+    }
+    setTestingBdBrowser(true);
+    setBdBrowserStatus('untested');
+    try {
+      const result = await window.api.testBrightDataBrowser(settings.brightDataBrowserAuth);
+      setBdBrowserStatus(result.success ? 'ok' : 'fail');
+      showToast(result.success ? 'Browser API connection OK!' : 'Browser API connection failed', result.success ? 'success' : 'error');
+    } finally {
+      setTestingBdBrowser(false);
     }
   };
 
@@ -215,6 +235,43 @@ export default function Settings({ showToast }: Props): React.ReactElement {
             disabled={testingBd}
           >
             {testingBd ? <><span className="spinner" /> Testing…</> : '🔌 Test Connection'}
+          </button>
+        </div>
+      </section>
+
+      {/* Bright Data Browser API section */}
+      <section style={{ marginBottom: 28 }}>
+        <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+          🌐 Bright Data Browser API (JS rendering)
+          {statusBadge(bdBrowserStatus)}
+        </h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <label className="label">Credentials (USER:PASS)</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                className="input"
+                type={showBdBrowserAuth ? 'text' : 'password'}
+                placeholder="brd-customer-...-zone-...:password"
+                value={settings.brightDataBrowserAuth ?? ''}
+                onChange={e => set('brightDataBrowserAuth', e.target.value)}
+                style={{ flex: 1, fontFamily: 'monospace' }}
+              />
+              <button className="btn-ghost" onClick={() => setShowBdBrowserAuth(v => !v)} style={{ fontSize: 12, padding: '0 10px' }}>
+                {showBdBrowserAuth ? '🙈' : '👁'}
+              </button>
+            </div>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+              From your Browser API zone's Overview tab. Renders JS/SPA sites · ~$8/GB
+            </p>
+          </div>
+          <button
+            className="btn-ghost"
+            style={{ alignSelf: 'flex-start', fontSize: 12 }}
+            onClick={handleTestBdBrowser}
+            disabled={testingBdBrowser}
+          >
+            {testingBdBrowser ? <><span className="spinner" /> Testing…</> : '🔌 Test Connection'}
           </button>
         </div>
       </section>

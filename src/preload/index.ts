@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('api', {
   getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   saveSettings: (settings: Partial<AppSettings>) => ipcRenderer.invoke(IPC.SETTINGS_SAVE, settings),
   testBrightData: (apiKey: string, zone: string) => ipcRenderer.invoke(IPC.SETTINGS_TEST_BD, apiKey, zone),
+  testBrightDataBrowser: (auth: string) => ipcRenderer.invoke(IPC.SETTINGS_TEST_BD_BROWSER, auth),
   testOllama: (url: string) => ipcRenderer.invoke(IPC.SETTINGS_TEST_OLLAMA, url),
   testAIProvider: (provider: AIProvider, config: { ollamaUrl?: string; apiKey?: string }) =>
     ipcRenderer.invoke(IPC.SETTINGS_TEST_AI_PROVIDER, provider, config),
