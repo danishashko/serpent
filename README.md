@@ -37,6 +37,18 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 
 ---
 
+## Screenshots
+
+| Crawl Results | Issues List |
+|---|---|
+| ![Crawl view showing pages table with SEO data](docs/screenshot-pages.png) | ![Issues List tab with SEO issue filters](docs/screenshot-issues.png) |
+
+| Site Map (Treemap) | Settings |
+|---|---|
+| ![Treemap visualizing site structure by link score](docs/screenshot-treemap.png) | ![Settings panel with Bright Data and AI provider config](docs/screenshot-settings.png) |
+
+---
+
 ## ✨ Features
 
 <details open>
