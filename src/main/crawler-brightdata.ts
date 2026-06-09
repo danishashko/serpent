@@ -43,7 +43,7 @@ export async function crawlPageBrightData(
       {
         zone,
         url,
-        format: 'raw',
+        format: 'json',
         country: 'us',
       },
       {
@@ -52,16 +52,27 @@ export async function crawlPageBrightData(
           Authorization: `Bearer ${apiKey}`,
         },
         timeout: 30000,
-        responseType: 'text',
+        responseType: 'json',
         validateStatus: () => true,
       }
     );
 
     responseTimeMs = Date.now() - startTime;
-    statusCode = response.status;
-    contentType = response.headers['content-type'] || 'text/html';
-    html = response.data as string;
-    pageSizeBytes = Buffer.byteLength(html, 'utf8');
+
+    // The Unlocker API always returns 200 on success (the API call succeeded).
+    // The actual target site status is inside the JSON envelope.
+    if (response.status === 200 && response.data && typeof response.data === 'object') {
+      const data = response.data as { status_code?: number; headers?: Record<string, string>; body?: string };
+      statusCode = data.status_code ?? response.status;
+      contentType = data.headers?.['content-type'] || 'text/html';
+      html = data.body ?? '';
+      pageSizeBytes = Buffer.byteLength(html, 'utf8');
+    } else {
+      // Non-200 from BD API itself — proxy-level error (auth, rate limit, etc.)
+      statusCode = response.status;
+      html = '';
+      pageSizeBytes = 0;
+    }
   } catch (err: unknown) {
     responseTimeMs = Date.now() - startTime;
     statusCode = 0;
