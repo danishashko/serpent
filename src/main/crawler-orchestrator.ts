@@ -50,6 +50,7 @@ export class CrawlOrchestrator extends EventEmitter {
   private startTime = 0;
   private apiKey: string | null = null;
   private bdZone: string = 'web_unlocker1';
+  private bdCustomerId: string | null = null;
   private bdBrowserAuth: string | null = null;
   private robotsRules: RobotsRuleSet | null = null;
   private robotsUserAgent: string = 'Serpent';
@@ -93,7 +94,7 @@ export class CrawlOrchestrator extends EventEmitter {
     }
   }
 
-  async startCrawl(config: CrawlConfig, apiKey?: string, bdZone?: string, bdBrowserAuth?: string): Promise<string> {
+  async startCrawl(config: CrawlConfig, apiKey?: string, bdZone?: string, bdBrowserAuth?: string, bdCustomerId?: string): Promise<string> {
     if (this.status === 'running') {
       // Only refuse if there's actual work in flight. If the in-memory state got stuck
       // (e.g. a previous resume that never reached idle), reset and proceed.
@@ -123,6 +124,7 @@ export class CrawlOrchestrator extends EventEmitter {
     this.startTime = Date.now();
     this.apiKey = apiKey || null;
     this.bdZone = bdZone || 'web_unlocker1';
+    this.bdCustomerId = bdCustomerId || null;
     this.bdBrowserAuth = bdBrowserAuth || null;
 
     // In list mode startUrl is a newline-separated list; derive the base origin
@@ -253,7 +255,7 @@ export class CrawlOrchestrator extends EventEmitter {
   }
 
   /** Resume an incomplete crawl from where it left off */
-  async resumeIncompleteCrawl(apiKey?: string, bdZone?: string, bdBrowserAuth?: string): Promise<string | null> {
+  async resumeIncompleteCrawl(apiKey?: string, bdZone?: string, bdBrowserAuth?: string, bdCustomerId?: string): Promise<string | null> {
     const incomplete = getLatestIncompleteCrawl();
     if (!incomplete) return null;
 
@@ -268,6 +270,7 @@ export class CrawlOrchestrator extends EventEmitter {
     this.startTime = Date.now();
     this.apiKey = apiKey || null;
     this.bdZone = bdZone || 'web_unlocker1';
+    this.bdCustomerId = bdCustomerId || null;
     this.bdBrowserAuth = bdBrowserAuth || null;
 
     const firstUrl = config.mode === 'spider'
@@ -425,7 +428,8 @@ export class CrawlOrchestrator extends EventEmitter {
           this.config,
           this.baseOrigin,
           this.apiKey,
-          this.bdZone
+          this.bdZone,
+          this.bdCustomerId
         );
         this.totalSpend += bdResult.page.costUsd;
         result = bdResult;

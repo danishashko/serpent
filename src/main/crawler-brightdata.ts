@@ -20,6 +20,32 @@ function normalizeUrlForComparison(url: string): string {
 
 const BD_ENDPOINT = 'https://api.brightdata.com/request';
 
+// Cache zone password to avoid hitting BD API on every request
+const zonePasswordCache = new Map<string, { password: string; expiresAt: number }>();
+const ZONE_PASSWORD_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getZonePassword(apiKey: string, zone: string): Promise<string | null> {
+  const cached = zonePasswordCache.get(zone);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.password;
+  }
+  try {
+    const res = await axios.get(`https://api.brightdata.com/zone?zone=${zone}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeout: 10000,
+      validateStatus: () => true,
+    });
+    if (res.status === 200 && res.data?.password?.[0]) {
+      const password = res.data.password[0];
+      zonePasswordCache.set(zone, { password, expiresAt: Date.now() + ZONE_PASSWORD_TTL_MS });
+      return password;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 export async function crawlPageBrightData(
   url: string,
   crawlId: string,
@@ -27,7 +53,8 @@ export async function crawlPageBrightData(
   config: CrawlConfig,
   baseOrigin: string,
   apiKey: string,
-  zone: string = 'web_unlocker1'
+  zone: string = 'web_unlocker1',
+  bdCustomerId?: string | null
 ): Promise<CrawlResult & { bytesDownloaded: number }> {
   const startTime = Date.now();
 
@@ -36,55 +63,136 @@ export async function crawlPageBrightData(
   let html = '';
   let responseTimeMs: number | null = null;
   let pageSizeBytes = 0;
+  const redirectChain: { url: string; statusCode: number }[] = [];
 
-  try {
-    const response = await axios.post(
-      BD_ENDPOINT,
-      {
-        zone,
-        url,
-        format: 'json',
-        country: 'us',
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        timeout: 30000,
-        responseType: 'json',
-        validateStatus: () => true,
+  // ── Proxy mode: when customer ID is provided, route through BD proxy
+  //    with maxRedirects:0 so we capture the real 301/302 chain.
+  // ──────────────────────────────────────────────────────────────────────
+  if (bdCustomerId) {
+    try {
+      const proxyPass = await getZonePassword(apiKey, zone);
+      if (!proxyPass) {
+        throw new Error('Failed to fetch zone password for proxy mode');
       }
-    );
+      const proxyUser = `brd-customer-${bdCustomerId}-zone-${zone}`;
+      let currentUrl = url;
+      const maxHops = config.followRedirects ? 10 : 0;
 
-    responseTimeMs = Date.now() - startTime;
+      for (let hop = 0; hop <= maxHops; hop++) {
+        const resp = await axios.get(currentUrl, {
+          proxy: {
+            protocol: 'http',
+            host: 'brd.superproxy.io',
+            port: 22225,
+            auth: { username: proxyUser, password: proxyPass },
+          },
+          timeout: config.timeout || 30000,
+          maxRedirects: 0,
+          headers: {
+            'User-Agent': 'Serpent/1.0 (SEO Crawler; +https://github.com/danishashko/serpent)',
+            'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+          responseType: 'text',
+          validateStatus: () => true,
+        });
 
-    // The Unlocker API always returns 200 on success (the API call succeeded).
-    // The actual target site status is inside the JSON envelope.
-    if (response.status === 200 && response.data && typeof response.data === 'object') {
-      const data = response.data as { status_code?: number; headers?: Record<string, string>; body?: string };
-      statusCode = data.status_code ?? response.status;
-      contentType = data.headers?.['content-type'] || 'text/html';
-      html = data.body ?? '';
-      pageSizeBytes = Buffer.byteLength(html, 'utf8');
-    } else {
-      // Non-200 from BD API itself — proxy-level error (auth, rate limit, etc.)
-      statusCode = response.status;
-      html = '';
-      pageSizeBytes = 0;
+        const code = resp.status;
+        const location = resp.headers['location'] as string | undefined;
+        const bdRedirectTo = resp.headers['x-unblocker-redirected-to'] as string | undefined;
+        const isRedirect = code >= 300 && code < 400 && location;
+
+        if (isRedirect && hop < maxHops) {
+          const nextUrl = new URL(location, currentUrl).toString();
+          redirectChain.push({ url: currentUrl, statusCode: code });
+          currentUrl = nextUrl;
+        } else {
+          if (redirectChain.length > 0) {
+            redirectChain.push({ url: currentUrl, statusCode: code });
+          }
+          statusCode = code;
+          contentType = resp.headers['content-type'] || 'text/html';
+          html = resp.data as string;
+          pageSizeBytes = Buffer.byteLength(html, 'utf8');
+
+          // BD follows redirects internally — if x-unblocker-redirected-to is present,
+          // the original URL was a redirect even though we see 200.
+          if (bdRedirectTo && redirectChain.length === 0) {
+            redirectChain.push({ url, statusCode: 301 });
+            redirectChain.push({ url: bdRedirectTo, statusCode: 200 });
+          }
+          break;
+        }
+      }
+
+      responseTimeMs = Date.now() - startTime;
+    } catch (err: unknown) {
+      responseTimeMs = Date.now() - startTime;
+      statusCode = 0;
     }
-  } catch (err: unknown) {
-    responseTimeMs = Date.now() - startTime;
-    statusCode = 0;
+  } else {
+    // ── REST API mode (detects redirects via x-unblocker-redirected-to header) ─
+    try {
+      const response = await axios.post(
+        BD_ENDPOINT,
+        {
+          zone,
+          url,
+          format: 'json',
+          country: 'us',
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          timeout: 30000,
+          responseType: 'json',
+          validateStatus: () => true,
+        }
+      );
+
+      responseTimeMs = Date.now() - startTime;
+
+      if (response.status === 200 && response.data && typeof response.data === 'object') {
+        const data = response.data as { status_code?: number; headers?: Record<string, string>; body?: string };
+        statusCode = data.status_code ?? response.status;
+        contentType = data.headers?.['content-type'] || 'text/html';
+        html = data.body ?? '';
+        pageSizeBytes = Buffer.byteLength(html, 'utf8');
+
+        // BD follows redirects internally. If x-unblocker-redirected-to is present,
+        // record the redirect chain even though status_code is 200.
+        const bdRedirectTo = data.headers?.['x-unblocker-redirected-to'];
+        if (bdRedirectTo) {
+          redirectChain.push({ url, statusCode: 301 });
+          redirectChain.push({ url: bdRedirectTo, statusCode: 200 });
+        }
+      } else {
+        statusCode = response.status;
+        html = '';
+        pageSizeBytes = 0;
+      }
+    } catch (err: unknown) {
+      responseTimeMs = Date.now() - startTime;
+      statusCode = 0;
+    }
   }
 
-  return buildResultFromHtml(html, url, crawlId, depth, config, baseOrigin, {
-    statusCode,
+  const result = buildResultFromHtml(html, url, crawlId, depth, config, baseOrigin, {
+    statusCode: redirectChain.length > 0 ? redirectChain[0].statusCode : statusCode,
     contentType,
     responseTimeMs,
     pageSizeBytes,
     costUsd: calculateBrightDataCost(),
   });
+
+  // Inject redirect chain
+  if (redirectChain.length > 0) {
+    result.redirectChain = redirectChain;
+  }
+
+  return result;
 }
 
 interface ParseMeta {

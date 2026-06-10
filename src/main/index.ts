@@ -237,6 +237,7 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
 
     let apiKey: string | null = null;
     let bdZone: string | null = null;
+    let bdCustomerId: string | null = null;
     let bdBrowserAuth: string | null = null;
 
     if (config.engine === 'brightdata') {
@@ -246,6 +247,7 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
       }
       apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
       bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+      bdCustomerId = await keytar.getPassword(KEYTAR_SERVICE, 'bd_customer_id');
       if (!apiKey) {
         return { success: false, error: 'Bright Data API key not configured. Go to Settings.' };
       }
@@ -260,7 +262,7 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
       }
     }
 
-    const crawlId = await orchestrator.startCrawl(config, apiKey || undefined, bdZone || undefined, bdBrowserAuth || undefined);
+    const crawlId = await orchestrator.startCrawl(config, apiKey || undefined, bdZone || undefined, bdBrowserAuth || undefined, bdCustomerId || undefined);
     return { success: true, crawlId };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -298,6 +300,7 @@ ipcMain.handle(IPC.CRAWL_RESUME_INCOMPLETE, async () => {
   try {
     let apiKey: string | null = null;
     let bdZone: string | null = null;
+    let bdCustomerId: string | null = null;
     let bdBrowserAuth: string | null = null;
 
     const incomplete = orchestrator.getIncompleteCrawl();
@@ -307,11 +310,12 @@ ipcMain.handle(IPC.CRAWL_RESUME_INCOMPLETE, async () => {
     if (config.engine === 'brightdata') {
       apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
       bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+      bdCustomerId = await keytar.getPassword(KEYTAR_SERVICE, 'bd_customer_id');
     } else if (config.engine === 'brightdata-browser') {
       bdBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
     }
 
-    const crawlId = await orchestrator.resumeIncompleteCrawl(apiKey || undefined, bdZone || undefined, bdBrowserAuth || undefined);
+    const crawlId = await orchestrator.resumeIncompleteCrawl(apiKey || undefined, bdZone || undefined, bdBrowserAuth || undefined, bdCustomerId || undefined);
     return { success: true, crawlId };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -387,6 +391,7 @@ ipcMain.handle(IPC.DATA_EXPORT_JSON, async (_event, data: { rows: Record<string,
 ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
   const bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+  const bdCustomerId = await keytar.getPassword(KEYTAR_SERVICE, 'bd_customer_id');
   const bdBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
   const openaiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key');
   const anthropicApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'anthropic_api_key');
@@ -396,6 +401,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const settings: AppSettings = {
     brightDataApiKey: apiKey || null,
     brightDataZone: bdZone || 'web_unlocker1',
+    brightDataCustomerId: bdCustomerId || null,
     brightDataBrowserAuth: bdBrowserAuth || null,
     maxCostPerCrawl: parseFloat(getConfig('max_cost_per_crawl') || '10'),
     maxCostPerDay: parseFloat(getConfig('max_cost_per_day') || '50'),
@@ -428,6 +434,13 @@ ipcMain.handle(IPC.SETTINGS_SAVE, async (_event, settings: Partial<AppSettings>)
     }
     if (settings.brightDataZone !== undefined) {
       await keytar.setPassword(KEYTAR_SERVICE, 'bd_zone', settings.brightDataZone || 'web_unlocker1');
+    }
+    if (settings.brightDataCustomerId !== undefined) {
+      if (settings.brightDataCustomerId) {
+        await keytar.setPassword(KEYTAR_SERVICE, 'bd_customer_id', settings.brightDataCustomerId);
+      } else {
+        await keytar.deletePassword(KEYTAR_SERVICE, 'bd_customer_id').catch(() => {});
+      }
     }
     if (settings.brightDataBrowserAuth !== undefined) {
       if (settings.brightDataBrowserAuth) {

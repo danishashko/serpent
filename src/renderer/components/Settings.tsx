@@ -8,6 +8,7 @@ interface Props {
 const defaultSettings: AppSettings = {
   brightDataApiKey: null,
   brightDataZone: 'web_unlocker1',
+  brightDataCustomerId: null,
   brightDataBrowserAuth: null,
   maxCostPerCrawl: 5.0,
   maxCostPerDay: 20.0,
@@ -212,6 +213,16 @@ export default function Settings({ showToast }: Props): React.ReactElement {
               placeholder="web_unlocker1"
               value={settings.brightDataZone ?? 'web_unlocker1'}
               onChange={e => set('brightDataZone', e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="label">Customer ID <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>(for proxy mode redirect tracking)</span></label>
+            <input
+              className="input"
+              type="text"
+              placeholder="hl_xxxxxxxx"
+              value={settings.brightDataCustomerId ?? ''}
+              onChange={e => set('brightDataCustomerId', e.target.value)}
             />
           </div>
           <div>
