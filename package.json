@@ -100,7 +100,7 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "resources/icon.icns"
+      "icon": "resources/icon.png"
     },
     "linux": {
       "target": "AppImage"
