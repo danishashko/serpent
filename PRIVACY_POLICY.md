@@ -21,7 +21,7 @@ Serpent makes network requests **only** when you explicitly initiate an action:
 |--------|------------|--------------|
 | **Local crawl** | Websites you choose to crawl | Standard HTTP requests (same as a browser) |
 | **Bright Data crawl** (optional) | `api.brightdata.com` → target websites | Your Bright Data API key + target URLs |
-| **AI analysis** (optional) | OpenAI, Anthropic, or Google APIs | Your API key + page content for analysis |
+| **AI analysis** (optional) | OpenAI, Anthropic, Google, or OpenRouter (`openrouter.ai`) APIs | Your API key + page content for analysis |
 | **Ollama analysis** (optional) | Your local Ollama instance | Page content (never leaves your machine) |
 | **Google Search Console** (optional) | `googleapis.com` | OAuth2 tokens for your GSC account |
 | **Auto-update check** | `github.com` (GitHub Releases) | App version number only |
@@ -33,6 +33,7 @@ Serpent uses a **Bring Your Own Key (BYOK)** model. If you connect third-party s
 - [OpenAI Privacy Policy](https://openai.com/privacy)
 - [Anthropic Privacy Policy](https://www.anthropic.com/privacy)
 - [Google Privacy Policy](https://policies.google.com/privacy)
+- [OpenRouter Privacy Policy](https://openrouter.ai/privacy)
 - [Bright Data Privacy Policy](https://brightdata.com/privacy)
 
 ## Telemetry

@@ -29,7 +29,7 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 
 | | |
 |---|---|
-| 🧠 **AI-native** | Per-page analysis, severity-scored issues, and auto-generated title/meta fixes — bring your own key for OpenAI, Anthropic, Gemini, or local Ollama. |
+| 🧠 **AI-native** | Per-page analysis, severity-scored issues, and auto-generated title/meta fixes — bring your own key for OpenAI, Anthropic, Gemini, OpenRouter, or local Ollama. |
 | 💸 **Genuinely free** | No URL caps, no license server, no subscription. MIT-licensed and unlimited. |
 | 🔒 **100% local** | SQLite storage, OS-keychain secrets, zero telemetry. Your crawl data never leaves your machine. |
 | 🛡️ **Crawls the un-crawlable** | Optional Bright Data integration bypasses bot protection; Electron's built-in Chromium renders JS — no separate browser required. |
@@ -83,7 +83,7 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 <details>
 <summary><b>🧠 AI Analysis (BYOK)</b></summary>
 
-- **Multi-LLM support** — OpenAI · Anthropic · Google Gemini · Ollama (local)
+- **Multi-LLM support** — OpenAI · Anthropic · Google Gemini · OpenRouter · Ollama (local)
 - Per-page SEO analysis with actionable recommendations
 - **AI issue recommendations** — grouped, plain-English explanations + fix suggestions
 - **Auto-generated fixes** — optimized titles & meta descriptions for problem pages
@@ -161,6 +161,7 @@ Open **Settings** and paste a key for any provider. Keys are stored in your **OS
 | OpenAI | API key from [platform.openai.com](https://platform.openai.com) | ❌ |
 | Anthropic | API key from [console.anthropic.com](https://console.anthropic.com) | ❌ |
 | Google Gemini | API key from [ai.google.dev](https://ai.google.dev) | ❌ |
+| OpenRouter | API key from [openrouter.ai](https://openrouter.ai) | ❌ |
 | Ollama | Install [Ollama](https://ollama.ai) and pull a model | ✅ |
 
 ### Bright Data (optional — for bot-protected sites)
@@ -202,7 +203,7 @@ flowchart LR
 |---------|:-------:|:--------------:|
 | Price | **Free / Open Source** | £199/yr |
 | URL limit (free tier) | **Unlimited** | 500 |
-| AI analysis | ✅ Multi-LLM (4 providers) | ❌ |
+| AI analysis | ✅ Multi-LLM (5 providers) | ❌ |
 | AI issue recommendations + auto-fixes | ✅ | ❌ |
 | Issue severity scoring | ✅ | ✅ |
 | Structured data / JSON-LD | ✅ Extraction + validation | ✅ |
