@@ -15,8 +15,6 @@ import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, 
 import { generateSitemap as buildSitemap } from './sitemap-generator';
 import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
-import { initCrawlCounter, addCrawledUrls, getCrawlUsage } from './crawl-counter';
-import { getLicense, activateLicense, deactivateLicense } from './license-manager';
 import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions } from '../types/index';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
@@ -136,7 +134,6 @@ function createWindow(): void {
 app.whenReady().then(() => {
   console.log('[MAIN] app ready — initializing DB');
   initDatabase();
-  initCrawlCounter(app.getPath('userData'));
   // Clear stale state from previous sessions that crashed mid-crawl.
   const interrupted = markRunningCrawlsAsInterrupted();
   if (interrupted > 0) {
@@ -203,9 +200,6 @@ orchestrator.on('error', (err: Error) => {
 });
 
 orchestrator.on('complete', (crawlId: string) => {
-  // Track URLs consumed against the free tier counter
-  const count = orchestrator.getCompletedCount();
-  addCrawledUrls(count);
   calculateLinkScores(crawlId);
   mainWindow?.webContents.send(IPC.CRAWL_COMPLETE, crawlId);
 
@@ -1220,25 +1214,4 @@ ipcMain.handle(IPC.SITEMAP_FETCH_URLS, async (_event, sitemapUrl: string) => {
   } catch (err) {
     return { urls: [], error: String(err) };
   }
-});
-
-// ─── License / Monetization IPC Handlers ────────────────────────────────────
-
-ipcMain.handle(IPC.LICENSE_GET, async () => {
-  const info = await getLicense();
-  const usage = getCrawlUsage();
-  return { ...info, ...usage };
-});
-
-ipcMain.handle(IPC.LICENSE_ACTIVATE, async (_event, key: string) => {
-  return activateLicense(key);
-});
-
-ipcMain.handle(IPC.LICENSE_DEACTIVATE, async () => {
-  await deactivateLicense();
-  return { success: true };
-});
-
-ipcMain.handle(IPC.CRAWL_GET_USAGE, async () => {
-  return getCrawlUsage();
 });

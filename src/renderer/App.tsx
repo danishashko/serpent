@@ -4,7 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlUsage } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -81,10 +81,6 @@ declare global {
       generateSitemap: (opts: SitemapGenerateOptions) => Promise<{ ok: boolean; canceled?: boolean; totalUrls?: number; files?: { filename: string; urlCount: number }[]; written?: string[]; error?: string }>;
       analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) => Promise<SitemapAnalysisResult>;
       sitemapFetchUrls: (sitemapUrl: string) => Promise<{ urls: string[]; error?: string }>;
-      licenseGet: () => Promise<unknown>;
-      licenseActivate: (key: string) => Promise<{ success: boolean; error?: string }>;
-      licenseDeactivate: () => Promise<{ success: boolean }>;
-      crawlGetUsage: () => Promise<CrawlUsage>;
       onUpdateAvailable: (cb: (info: { version: string }) => void) => void;
       onUpdateDownloaded: (cb: (info: { version: string }) => void) => void;
       installUpdate?: () => Promise<void>;
