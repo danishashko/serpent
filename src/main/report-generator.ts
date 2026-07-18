@@ -28,10 +28,14 @@ function buildExecutiveSummary(data: ReportData): string {
   const totalPages = pages.length;
   const avgGeo = geoScores.length ? Math.round(geoScores.reduce((s, g) => s + g.overallScore, 0) / geoScores.length) : 0;
   const avgPerf = perfScores.length ? Math.round(perfScores.reduce((s, p) => s + p.overallScore, 0) / perfScores.length) : 0;
+  // On-page content issues only make sense for pages that returned HTML (2xx).
+  // Redirects (3xx) and errors (4xx/5xx) have no body, so excluding them keeps
+  // "missing title/description" counts honest.
+  const isContentPage = (p: PageData) => (p.statusCode ?? 0) >= 200 && (p.statusCode ?? 0) < 300;
   const errPages = pages.filter(p => p.statusCode && p.statusCode >= 400).length;
   const noIndex = pages.filter(p => !p.isIndexable).length;
-  const noTitle = pages.filter(p => !p.title || !p.title.trim()).length;
-  const noMeta = pages.filter(p => !p.metaDescription || !p.metaDescription.trim()).length;
+  const noTitle = pages.filter(p => isContentPage(p) && (!p.title || !p.title.trim())).length;
+  const noMeta = pages.filter(p => isContentPage(p) && (!p.metaDescription || !p.metaDescription.trim())).length;
 
   return `
     <div class="section">
@@ -76,10 +80,15 @@ function buildTechnicalIssues(data: ReportData): string {
     }
   };
 
-  check('Missing title', 'critical', p => !p.title || !p.title.trim());
-  check('Missing meta description', 'warning', p => !p.metaDescription || !p.metaDescription.trim());
-  check('Missing H1', 'warning', p => !p.h1 || !p.h1.trim());
-  check('Multiple H1 tags', 'warning', p => p.h1Count > 1);
+  // On-page content checks only apply to pages that returned HTML (2xx).
+  // A 3xx redirect or 4xx/5xx error has no <title>/<h1>, so flagging it as
+  // "Missing title" is a false positive that inflates the critical count.
+  const is2xx = (p: PageData) => (p.statusCode ?? 0) >= 200 && (p.statusCode ?? 0) < 300;
+
+  check('Missing title', 'critical', p => is2xx(p) && (!p.title || !p.title.trim()));
+  check('Missing meta description', 'warning', p => is2xx(p) && (!p.metaDescription || !p.metaDescription.trim()));
+  check('Missing H1', 'warning', p => is2xx(p) && (!p.h1 || !p.h1.trim()));
+  check('Multiple H1 tags', 'warning', p => is2xx(p) && p.h1Count > 1);
   check('4xx errors', 'critical', p => (p.statusCode || 0) >= 400 && (p.statusCode || 0) < 500);
   check('5xx errors', 'critical', p => (p.statusCode || 0) >= 500);
   check('Non-indexable', 'warning', p => !p.isIndexable);

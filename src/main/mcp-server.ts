@@ -260,22 +260,26 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       const issues: Record<'critical' | 'warning' | 'info', Issue[]> = { critical: [], warning: [], info: [] };
 
       for (const p of pages) {
+        // A 2xx page returned an HTML body we can audit. Redirects (3xx) and
+        // errors (4xx/5xx) have no body, so on-page content checks below would
+        // be false positives ("Missing title" on a 301) — skip them for those.
+        const is2xx = p.statusCode !== null && p.statusCode >= 200 && p.statusCode < 300;
         if (p.statusCode !== null && p.statusCode >= 400) {
           issues.critical.push({ url: p.url, details: `HTTP ${p.statusCode}` });
         }
-        if (!p.title || !p.title.trim()) {
+        if (is2xx && (!p.title || !p.title.trim())) {
           issues.critical.push({ url: p.url, details: 'Missing title' });
         }
         if (p.titleLength !== null && (p.titleLength < 10 || p.titleLength > 60)) {
           issues.warning.push({ url: p.url, details: `Title length ${p.titleLength} chars (ideal: 10-60)` });
         }
-        if (!p.metaDescription || !p.metaDescription.trim()) {
+        if (is2xx && (!p.metaDescription || !p.metaDescription.trim())) {
           issues.warning.push({ url: p.url, details: 'Missing meta description' });
         }
         if (!p.isIndexable) {
           issues.warning.push({ url: p.url, details: 'Page marked as non-indexable' });
         }
-        if (!p.h1 || !p.h1.trim()) {
+        if (is2xx && (!p.h1 || !p.h1.trim())) {
           issues.warning.push({ url: p.url, details: 'Missing H1' });
         }
         if (p.h1Count > 1) {
@@ -287,10 +291,10 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         if (p.canonicalUrl && p.canonicalUrl !== p.url) {
           issues.info.push({ url: p.url, details: `Canonicalized to ${p.canonicalUrl}` });
         }
-        if (!p.ogImage || !p.ogImage.trim()) {
+        if (is2xx && (!p.ogImage || !p.ogImage.trim())) {
           issues.warning.push({ url: p.url, details: 'Missing OG image (og:image)' });
         }
-        if (!p.hasStructuredData) {
+        if (is2xx && !p.hasStructuredData) {
           issues.info.push({ url: p.url, details: 'No structured data (Schema.org)' });
         }
         if (p.wordCount !== null && p.wordCount > 0 && p.wordCount < 300) {
