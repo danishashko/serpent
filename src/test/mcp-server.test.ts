@@ -30,6 +30,7 @@ vi.mock('../main/database', () => ({
 
 // ── Import after mocks are in place ────────────────────────────────────────
 import { startMcpServer } from '../main/mcp-server';
+import { getPagesByCrawl } from '../main/database';
 
 // ── Minimal CrawlOrchestrator stub ─────────────────────────────────────────
 function makeMockOrchestrator() {
@@ -231,5 +232,56 @@ describe('MCP HTTP server', () => {
     expect(data.status).toBe('idle');
     expect(data.crawl_id).toBeNull();
     expect(data.completed_pages).toBe(0);
+  });
+
+  // ── Helpers for the tool-behaviour tests below ─────────────────────────────
+  async function initSession(): Promise<string> {
+    const initRes = await postMcp({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
+    });
+    return initRes.headers['mcp-session-id'] as string;
+  }
+
+  async function callTool(sessionId: string, name: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }> {
+    const res = await postMcp(
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } },
+      { 'mcp-session-id': sessionId }
+    );
+    const json = parseSseOrJson(res.body, res.headers['content-type'] ?? '') as Record<string, unknown>;
+    const result = json?.result as { content?: Array<{ text: string }>; isError?: boolean };
+    return { isError: result?.isError === true, text: result?.content?.[0]?.text ?? '' };
+  }
+
+  it('start_crawl refuses link-local / cloud-metadata addresses on any engine', async () => {
+    const sessionId = await initSession();
+    const r = await callTool(sessionId, 'start_crawl', { url: 'http://169.254.169.254/', engine: 'local', mode: 'list' });
+    expect(r.isError).toBe(true);
+    expect(r.text.toLowerCase()).toContain('metadata');
+  });
+
+  it('start_crawl still allows localhost on the local engine (dev-site crawling)', async () => {
+    const sessionId = await initSession();
+    const r = await callTool(sessionId, 'start_crawl', { url: 'http://127.0.0.1:3000/', engine: 'local', mode: 'list' });
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain('Crawl started');
+  });
+
+  it('get_issues caps each severity list to `limit` while reporting true counts', async () => {
+    // 150 pages that each return 200 with no <title> → 150 "Missing title" criticals.
+    const pages = Array.from({ length: 150 }, (_, i) => ({
+      url: `http://example.com/p${i}`,
+      statusCode: 200, title: null, titleLength: null,
+      metaDescription: `desc ${i}`, isIndexable: true,
+      h1: 'H', h1Count: 1, responseTimeMs: 100, canonicalUrl: null,
+      ogImage: 'x', hasStructuredData: true, wordCount: 500, h2Count: 1,
+    }));
+    vi.mocked(getPagesByCrawl).mockReturnValueOnce(pages as unknown as ReturnType<typeof getPagesByCrawl>);
+    const sessionId = await initSession();
+    const r = await callTool(sessionId, 'get_issues', { crawl_id: 'x', limit: 10 });
+    const data = JSON.parse(r.text) as { critical_count: number; truncated: boolean; issues: { critical: unknown[] } };
+    expect(data.critical_count).toBe(150);
+    expect(data.issues.critical.length).toBe(10);
+    expect(data.truncated).toBe(true);
   });
 });

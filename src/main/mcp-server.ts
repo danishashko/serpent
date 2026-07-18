@@ -60,32 +60,43 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       const resolvedMaxUrls = max_urls ?? 500;
       const resolvedMaxDepth = max_depth ?? 10;
 
-      // SSRF protection: block internal/private network targets for Bright Data mode
-      // (BD proxies the request, so an internal URL would be fetched from Bright Data's infrastructure)
-      if (resolvedEngine === 'brightdata') {
-        try {
-          const u = new URL(url);
-          if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-            return { content: [{ type: 'text' as const, text: 'Invalid URL: only http/https allowed.' }] };
-          }
-          const host = u.hostname.toLowerCase().replace(/\.$/, '');
-          const internalHostRe = /^(localhost|0\.0\.0\.0|::1|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|169\.254\.\d+\.\d+|metadata\.google\.internal)$/i;
-          if (internalHostRe.test(host)) {
-            return { content: [{ type: 'text' as const, text: 'Cannot crawl internal/private network addresses with Bright Data engine.' }] };
-          }
-        } catch {
-          return { content: [{ type: 'text' as const, text: 'Invalid URL provided.' }] };
+      // Validate the URL and block dangerous targets before starting.
+      let host: string;
+      try {
+        const u = new URL(url);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          return { isError: true, content: [{ type: 'text' as const, text: 'Invalid URL: only http/https allowed.' }] };
         }
+        host = u.hostname.toLowerCase().replace(/\.$/, '');
+      } catch {
+        return { isError: true, content: [{ type: 'text' as const, text: 'Invalid URL provided.' }] };
+      }
+
+      // Link-local / cloud-metadata endpoints are never a legitimate crawl
+      // target and are the classic SSRF exfil vector, so block them on every
+      // engine. Localhost and RFC-1918 LAN hosts stay crawlable on the local
+      // engine — crawling your own dev/staging site is a supported use case.
+      const metadataHostRe = /^(169\.254\.\d+\.\d+|metadata\.google\.internal)$/i;
+      if (metadataHostRe.test(host)) {
+        return { isError: true, content: [{ type: 'text' as const, text: 'Refusing to crawl a link-local / cloud-metadata address.' }] };
       }
 
       let apiKey: string | null = null;
       let bdZone: string | null = null;
 
       if (resolvedEngine === 'brightdata') {
+        // Bright Data proxies the request from its own infrastructure, so an
+        // internal URL would be fetched from inside BD's network — block the
+        // full private range for this engine.
+        const internalHostRe = /^(localhost|0\.0\.0\.0|::1|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|169\.254\.\d+\.\d+|metadata\.google\.internal)$/i;
+        if (internalHostRe.test(host)) {
+          return { isError: true, content: [{ type: 'text' as const, text: 'Cannot crawl internal/private network addresses with Bright Data engine.' }] };
+        }
+
         apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
         bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
         if (!apiKey) {
-          return { content: [{ type: 'text' as const, text: 'BrightData API key not configured. Please add it in Serpent Settings.' }] };
+          return { isError: true, content: [{ type: 'text' as const, text: 'BrightData API key not configured. Please add it in Serpent Settings.' }] };
         }
       }
 
@@ -116,7 +127,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         return { content: [{ type: 'text' as const, text: `Crawl started. ID: ${crawlId}` }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: 'text' as const, text: `Failed to start crawl: ${msg}` }] };
+        return { isError: true, content: [{ type: 'text' as const, text: `Failed to start crawl: ${msg}` }] };
       }
     }
   );
@@ -249,9 +260,10 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       description: 'Get SEO issues found during a crawl, grouped by severity.',
       inputSchema: z.object({
         crawl_id: z.string().describe('Crawl ID to analyze'),
+        limit: z.number().int().min(1).max(1000).optional().describe('Max issues to return per severity (critical/warning/info). The *_count fields always report the true totals. Defaults to 100.'),
       }),
     },
-    async ({ crawl_id }) => {
+    async ({ crawl_id, limit }) => {
       const pages = getPagesByCrawl(crawl_id) as PageData[];
       if (pages.length === 0) {
         return { content: [{ type: 'text' as const, text: `No pages found for crawl ${crawl_id}.` }] };
@@ -335,12 +347,25 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         }
       }
 
+      // Cap each severity list so a large crawl can't dump thousands of issues
+      // into the caller's context in one response. Counts above stay truthful.
+      const resolvedLimit = limit ?? 100;
+      const truncated =
+        issues.critical.length > resolvedLimit ||
+        issues.warning.length > resolvedLimit ||
+        issues.info.length > resolvedLimit;
       const result = {
         total_pages: pages.length,
         critical_count: issues.critical.length,
         warning_count: issues.warning.length,
         info_count: issues.info.length,
-        issues,
+        limit: resolvedLimit,
+        truncated,
+        issues: {
+          critical: issues.critical.slice(0, resolvedLimit),
+          warning: issues.warning.slice(0, resolvedLimit),
+          info: issues.info.slice(0, resolvedLimit),
+        },
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
