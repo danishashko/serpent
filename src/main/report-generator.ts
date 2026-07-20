@@ -94,7 +94,7 @@ function buildTechnicalIssues(data: ReportData): string {
   check('Non-indexable', 'warning', p => !p.isIndexable);
   check('Title too long (>60 chars)', 'info', p => (p.titleLength || 0) > 60);
   check('Meta description too long (>160)', 'info', p => (p.metaDescLength || 0) > 160);
-  check('Thin content (<100 words)', 'warning', p => (p.wordCount || 0) < 100 && (p.statusCode || 0) < 300);
+  check('Thin content (<100 words)', 'warning', p => is2xx(p) && (p.wordCount || 0) < 100);
 
   if (issues.length === 0) return '<div class="section"><h2>Technical Issues</h2><p>No technical issues found. 🎉</p></div>';
 
@@ -195,7 +195,7 @@ function buildContentQuality(data: ReportData): string {
   const { pages } = data;
   const withContent = pages.filter(p => (p.wordCount || 0) > 0);
   const avgWords = withContent.length ? Math.round(withContent.reduce((s, p) => s + (p.wordCount || 0), 0) / withContent.length) : 0;
-  const thin = pages.filter(p => (p.wordCount || 0) < 100 && (p.statusCode || 0) < 300);
+  const thin = pages.filter(p => (p.statusCode ?? 0) >= 200 && (p.statusCode ?? 0) < 300 && (p.wordCount || 0) < 100);
 
   return `
     <div class="section">
