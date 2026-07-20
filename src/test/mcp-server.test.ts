@@ -284,4 +284,24 @@ describe('MCP HTTP server', () => {
     expect(data.issues.critical.length).toBe(10);
     expect(data.truncated).toBe(true);
   });
+
+  it('export_csv neutralizes spreadsheet formula injection in page fields', async () => {
+    const pages = [{
+      url: 'http://example.com/evil',
+      statusCode: 200,
+      title: '=HYPERLINK("http://evil.example","click")',
+      titleLength: 42, metaDescription: '+1234567890', metaDescLength: 11,
+      h1: '@cmd', h2: null, h1Count: 1, h2Count: 0, wordCount: 500,
+      canonicalUrl: null, isCanonicalized: false, isIndexable: true,
+      responseTimeMs: 100, pageSizeBytes: 1000, crawlDepth: 0, costUsd: 0,
+    }];
+    vi.mocked(getPagesByCrawl).mockReturnValueOnce(pages as unknown as ReturnType<typeof getPagesByCrawl>);
+    const sessionId = await initSession();
+    const r = await callTool(sessionId, 'export_csv', { crawl_id: 'x' });
+    const dataRow = r.text.split('\n')[1];
+    expect(dataRow).toContain(`"'=HYPERLINK("`);
+    expect(dataRow).toContain(`'+1234567890`);
+    expect(dataRow).toContain(`'@cmd`);
+    expect(dataRow).not.toMatch(/(^|,)=HYPERLINK/);
+  });
 });

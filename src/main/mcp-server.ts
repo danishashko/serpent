@@ -395,9 +395,12 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       const escape = (v: unknown): string => {
         if (v === null || v === undefined) return '';
         const s = String(v);
-        return (s.includes(',') || s.includes('"') || s.includes('\n'))
-          ? `"${s.replace(/"/g, '""')}"`
-          : s;
+        // Prevent spreadsheet formula injection (OWASP CSV injection) — same
+        // guard as buildCsvString in index.ts
+        const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+        return (safe.includes(',') || safe.includes('"') || safe.includes('\n'))
+          ? `"${safe.replace(/"/g, '""')}"`
+          : safe;
       };
 
       const rows = pages.map((p) => headers.map((h) => escape(p[h])).join(','));
