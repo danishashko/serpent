@@ -427,6 +427,23 @@ export function getCrawledUrls(crawlId: string): string[] {
   return rows.map(r => r.url);
 }
 
+/**
+ * Frontier for resuming an interrupted crawl: internal link targets that were
+ * discovered but never crawled, each with the depth it would have been
+ * enqueued at (min source depth + 1).
+ */
+export function getUncrawledLinkTargets(crawlId: string): { url: string; depth: number }[] {
+  const rows = db.prepare(`
+    SELECT l.target_url as url, COALESCE(MIN(p.crawl_depth), 0) + 1 as depth
+    FROM links l
+    JOIN pages p ON p.crawl_id = l.crawl_id AND p.url = l.source_url
+    WHERE l.crawl_id = ? AND l.is_internal = 1
+      AND l.target_url NOT IN (SELECT url FROM pages WHERE crawl_id = ?)
+    GROUP BY l.target_url
+  `).all(crawlId, crawlId) as { url: string; depth: number }[];
+  return rows;
+}
+
 export function getPagesByCrawl(crawlId: string): PageData[] {
   return db.prepare(`
     SELECT id, crawl_id as crawlId, url, status_code as statusCode, content_type as contentType,
@@ -484,11 +501,16 @@ export function insertLinks(links: LinkData[]): void {
 }
 
 export function getLinksByCrawl(crawlId: string): LinkData[] {
+  // Internal link targets were crawled, so backfill their status from the
+  // pages table — otherwise broken internal links show no status in the UI
+  // (links.status_code is only populated by the external-link checker).
   return db.prepare(`
-    SELECT id, crawl_id as crawlId, source_url as sourceUrl, target_url as targetUrl,
-      is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr,
-      status_code as statusCode
-    FROM links WHERE crawl_id = ?
+    SELECT l.id, l.crawl_id as crawlId, l.source_url as sourceUrl, l.target_url as targetUrl,
+      l.is_internal as isInternal, l.anchor_text as anchorText, l.rel_attr as relAttr,
+      COALESCE(l.status_code, p.status_code) as statusCode
+    FROM links l
+    LEFT JOIN pages p ON p.crawl_id = l.crawl_id AND p.url = l.target_url
+    WHERE l.crawl_id = ?
   `).all(crawlId) as LinkData[];
 }
 

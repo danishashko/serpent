@@ -26,6 +26,7 @@ import {
   updateCrawlStatus,
   pageExists,
   getCrawledUrls,
+  getUncrawledLinkTargets,
   getLatestIncompleteCrawl,
 } from './database';
 import { parseRobotsTxt, checkPath, type RobotsRuleSet } from './robots-tester';
@@ -305,9 +306,16 @@ export class CrawlOrchestrator extends EventEmitter {
     this.nextRequestSlot = 0;
     this.queue = new PQueue({ concurrency, autoStart: true });
 
-    // Re-enqueue the start URL — enqueueUrl will skip already-visited
+    // Re-enqueue the start URL(s) — enqueueUrl will skip already-visited —
+    // then rebuild the spider frontier from the link graph: discovered
+    // internal targets that were never crawled. Without this, resuming a
+    // spider crawl whose seed is already in `visited` enqueues nothing and
+    // the crawl wedges in 'running' forever.
     if (config.mode === 'spider') {
       this.enqueueUrl(config.startUrl, 0);
+      for (const { url, depth } of getUncrawledLinkTargets(this.crawlId)) {
+        this.enqueueUrl(url, depth);
+      }
     } else {
       const urls = config.startUrl.split('\n').map(u => u.trim()).filter(u => u.length > 0);
       for (const u of urls) {
@@ -331,19 +339,48 @@ export class CrawlOrchestrator extends EventEmitter {
       }
     });
 
+    // Nothing left to crawl (everything discovered was already fetched):
+    // finalize immediately — an empty queue never fires 'idle'.
+    if (this.queue.size === 0 && this.queue.pending === 0) {
+      this.status = 'completed';
+      updateCrawlStatus(
+        this.crawlId,
+        'completed',
+        this.totalQueued,
+        this.completedCount,
+        this.totalSpend,
+        new Date().toISOString()
+      );
+      this.emitProgress();
+      this.emit('complete', this.crawlId);
+      return this.crawlId;
+    }
+
     this.emitProgress();
     return this.crawlId;
   }
 
   private enqueueUrl(url: string, depth: number): void {
     if (!this.config) return;
+
+    // Normalize through WHATWG URL so the seed and discovered links dedupe to
+    // the same key (e.g. "https://example.com" vs "https://example.com/"),
+    // and fragments never create duplicate queue entries.
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+      parsed.hash = '';
+      url = parsed.toString();
+    } catch {
+      return;
+    }
+
     if (this.visited.has(url) || this.pending.has(url)) return;
     if (this.config.maxUrls > 0 && this.totalQueued >= this.config.maxUrls) return;
     if (this.config.maxDepth > 0 && depth > this.config.maxDepth) return;
 
     // Scope check
     try {
-      const parsed = new URL(url);
       // Spider mode is restricted to the seed origin so the crawl can't wander
       // off-site. List mode (paste / clipboard / file / sitemap) must crawl the
       // exact URLs the user supplied — even across different domains — so the
@@ -365,7 +402,11 @@ export class CrawlOrchestrator extends EventEmitter {
 
   private async processUrl(url: string, depth: number): Promise<void> {
     if (!this.config) return;
-    if (this.status === 'paused') return;
+    if (this.status === 'paused') {
+      // Re-queue so the URL isn't silently consumed — it runs after resume().
+      this.queue?.add(() => this.processUrl(url, depth));
+      return;
+    }
 
     // Check cost limit before fetching (paid engines)
     if (this.config.engine !== 'local' && this.config.maxCostUsd > 0) {
@@ -377,6 +418,8 @@ export class CrawlOrchestrator extends EventEmitter {
           currentSpend: this.totalSpend,
           limit: this.config.maxCostUsd,
         });
+        // Re-queue the in-flight URL so raising the limit + resume() retries it.
+        this.queue?.add(() => this.processUrl(url, depth));
         return;
       }
     }
@@ -447,14 +490,18 @@ export class CrawlOrchestrator extends EventEmitter {
       if (result.links.length > 0) insertLinks(result.links);
       if (result.images.length > 0) insertImages(result.images);
 
-      // Store redirect chain
-      if (result.redirectChain.length > 0) {
-        const finalUrl = result.redirectChain[result.redirectChain.length - 1]?.url || url;
-        const redirectRows: RedirectData[] = result.redirectChain.map((hop, i) => ({
+      // Store redirect chain. The chain is [{url, statusCode}, ...] where each
+      // entry is a URL that responded and the last entry is the final landing
+      // page — so one redirect *edge* per entry except the last: source is
+      // chain[i], target is chain[i+1], carrying the 3xx code of the source.
+      if (result.redirectChain.length > 1) {
+        const chain = result.redirectChain;
+        const finalUrl = chain[chain.length - 1].url;
+        const redirectRows: RedirectData[] = chain.slice(0, -1).map((hop, i) => ({
           id: uuidv4(),
           crawlId: this.crawlId,
-          sourceUrl: i === 0 ? url : result.redirectChain[i - 1].url,
-          targetUrl: hop.url,
+          sourceUrl: hop.url,
+          targetUrl: chain[i + 1].url,
           statusCode: hop.statusCode,
           hopNumber: i,
           finalUrl,
@@ -493,8 +540,10 @@ export class CrawlOrchestrator extends EventEmitter {
         if (this.responseTimes.length > 100) this.responseTimes.shift();
       }
 
-      // Save progress every 10 pages
-      if (this.completedCount % 10 === 0) {
+      // Save progress every 10 pages. Guard on live status: an in-flight task
+      // finishing after stop() must not resurrect the crawl as 'running'
+      // (which would also null the end_time stop() just wrote).
+      if (this.completedCount % 10 === 0 && this.status === 'running') {
         updateCrawlStatus(this.crawlId, 'running', this.totalQueued, this.completedCount, this.totalSpend);
       }
 
