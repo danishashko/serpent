@@ -41,8 +41,9 @@ vi.mock('electron', () => {
   const ipcMain = { handle: () => {}, on: () => {} };
   const dialog = { showSaveDialog: () => Promise.resolve({ canceled: true }) };
   const shell = { openExternal: () => Promise.resolve() };
+  const session = { defaultSession: { webRequest: { onHeadersReceived: () => {} } } };
 
-  return { app, ipcMain, BrowserWindow, dialog, shell, default: { app, ipcMain, BrowserWindow, dialog, shell } };
+  return { app, ipcMain, BrowserWindow, dialog, shell, session, default: { app, ipcMain, BrowserWindow, dialog, shell, session } };
 });
 
 // Stub axios so the non-JS branch isn't accidentally exercised.

@@ -33,4 +33,12 @@ export const shell = {
   openExternal: () => Promise.resolve(),
 };
 
-export default { app, ipcMain, BrowserWindow, dialog, shell };
+export const session = {
+  defaultSession: {
+    webRequest: {
+      onHeadersReceived: () => {},
+    },
+  },
+};
+
+export default { app, ipcMain, BrowserWindow, dialog, shell, session };

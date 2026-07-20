@@ -3,11 +3,15 @@ import * as cheerio from 'cheerio';
 import { URL } from 'url';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, session } from 'electron';
 import { PageData, LinkData, ImageData, CrawlConfig } from '../types/index';
 
 // Approximate pixel widths per character (Arial 13px, common browser default)
 const AVG_CHAR_PX = 7.2;
+
+// Cap response bodies so a crawled URL serving a huge file (video, archive,
+// gzip bomb) can't buffer gigabytes into the main process.
+const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 
 function estimatePixelWidth(text: string): number {
   return Math.round(text.length * AVG_CHAR_PX);
@@ -56,10 +60,36 @@ export interface CrawlResult {
 // --- JS rendering via hidden Electron BrowserWindow ---
 // Reuses Electron's own Chromium — no extra binary needed.
 
+// Electron allows a single onHeadersReceived listener per session, so register
+// one global hook lazily and route main-frame response headers by webContentsId.
+// This is how the JS-render path learns security headers (HSTS/CSP/etc.) that
+// executeJavaScript cannot see.
+const renderedHeaders = new Map<number, Record<string, string>>();
+let headerHookInstalled = false;
+
+function installHeaderHook(): void {
+  if (headerHookInstalled) return;
+  headerHookInstalled = true;
+  try {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      if (details.resourceType === 'mainFrame' && typeof details.webContentsId === 'number') {
+        const flat: Record<string, string> = {};
+        for (const [k, v] of Object.entries(details.responseHeaders ?? {})) {
+          flat[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : String(v);
+        }
+        renderedHeaders.set(details.webContentsId, flat);
+      }
+      callback({});
+    });
+  } catch {
+    // session unavailable (tests / early startup) — headers stay uncaptured
+  }
+}
+
 async function fetchWithElectronRenderer(
   url: string,
   timeout: number
-): Promise<{ html: string; statusCode: number; responseTimeMs: number }> {
+): Promise<{ html: string; statusCode: number; responseTimeMs: number; headers: Record<string, string> | null }> {
   const startTime = Date.now();
   let statusCode = 0;
 
@@ -80,6 +110,9 @@ async function fetchWithElectronRenderer(
 
   // Prevent popups
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  installHeaderHook();
+  const wcId = win.webContents.id;
 
   try {
     // Phase 1: wait for the page to finish loading
@@ -134,7 +167,7 @@ async function fetchWithElectronRenderer(
       'document.documentElement.outerHTML'
     )) as string;
 
-    return { html, statusCode: statusCode || 200, responseTimeMs: Date.now() - startTime };
+    return { html, statusCode: statusCode || 200, responseTimeMs: Date.now() - startTime, headers: renderedHeaders.get(wcId) ?? null };
   } catch (err) {
     // Even on timeout/error, try to grab whatever HTML rendered so far
     console.error(`[JS-RENDER] Error for ${url}:`, (err as Error).message);
@@ -143,11 +176,12 @@ async function fetchWithElectronRenderer(
         'document.documentElement.outerHTML'
       )) as string;
       if (partialHtml && partialHtml.length > 200) {
-        return { html: partialHtml, statusCode: statusCode || 200, responseTimeMs: Date.now() - startTime };
+        return { html: partialHtml, statusCode: statusCode || 200, responseTimeMs: Date.now() - startTime, headers: renderedHeaders.get(wcId) ?? null };
       }
     } catch { /* window already destroyed or unreachable */ }
-    return { html: '', statusCode: 0, responseTimeMs: Date.now() - startTime };
+    return { html: '', statusCode: 0, responseTimeMs: Date.now() - startTime, headers: null };
   } finally {
+    renderedHeaders.delete(wcId);
     if (!win.isDestroyed()) win.destroy();
   }
 }
@@ -167,6 +201,7 @@ export async function crawlPageLocal(
   let pageSizeBytes: number | null = null;
 
   let response: AxiosResponse | null = null;
+  let responseHeaders: Record<string, unknown> | null = null;
   const redirectChain: { url: string; statusCode: number }[] = [];
 
   if (config.jsRender) {
@@ -176,6 +211,7 @@ export async function crawlPageLocal(
       html = rendered.html;
       statusCode = rendered.statusCode;
       responseTimeMs = rendered.responseTimeMs;
+      responseHeaders = rendered.headers;
       contentType = 'text/html';
       pageSizeBytes = Buffer.byteLength(html, 'utf8');
     } catch {
@@ -192,6 +228,8 @@ export async function crawlPageLocal(
         const resp = await axios.get(currentUrl, {
           timeout: config.timeout || 10000,
           maxRedirects: 0,
+          maxContentLength: MAX_RESPONSE_BYTES,
+          maxBodyLength: MAX_RESPONSE_BYTES,
           headers: {
             'User-Agent': 'Serpent/1.0 (SEO Crawler; +https://github.com/danishashko/serpent)',
             'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
@@ -222,6 +260,7 @@ export async function crawlPageLocal(
 
       responseTimeMs = Date.now() - startTime;
       statusCode = response!.status;
+      responseHeaders = response!.headers as Record<string, unknown>;
       contentType = response!.headers['content-type'] || null;
       html = response!.data as string;
       pageSizeBytes = Buffer.byteLength(html, 'utf8');
@@ -296,11 +335,12 @@ export async function crawlPageLocal(
   let schemaErrors: string | null = null;
   let hasStructuredData = false;
 
-  // Security headers (available from HTTP response regardless of content type)
-  const hasHSTS = !!response?.headers?.['strict-transport-security'];
-  const hasCSP = !!response?.headers?.['content-security-policy'];
-  const xFrameOptions: string | null = (response?.headers?.['x-frame-options'] as string) ?? null;
-  const xContentTypeOptions: string | null = (response?.headers?.['x-content-type-options'] as string) ?? null;
+  // Security headers (from the axios response, or captured via the webRequest
+  // hook on the JS-render path)
+  const hasHSTS = !!responseHeaders?.['strict-transport-security'];
+  const hasCSP = !!responseHeaders?.['content-security-policy'];
+  const xFrameOptions: string | null = (responseHeaders?.['x-frame-options'] as string) ?? null;
+  const xContentTypeOptions: string | null = (responseHeaders?.['x-content-type-options'] as string) ?? null;
 
   const isHTML = contentType && contentType.includes('text/html');
 
