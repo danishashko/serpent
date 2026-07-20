@@ -131,9 +131,32 @@ function createWindow(): void {
 
 // ─── App Lifecycle ─────────────────────────────────────────────────────────────
 
+// Single-instance lock: a second copy of the app would share the same SQLite
+// file and MCP port — duplicate page rows and EADDRINUSE. Focus the existing
+// window instead. (Scoped to the userData path, so isolated test instances
+// with distinct --user-data-dir still launch.)
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+}
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
+
 app.whenReady().then(() => {
   console.log('[MAIN] app ready — initializing DB');
-  initDatabase();
+  try {
+    initDatabase();
+  } catch (err) {
+    // Without this, a DB init failure is an unhandled rejection and the app
+    // sits with no window and no error — surface it and exit instead.
+    console.error('[MAIN] database init failed:', err);
+    dialog.showErrorBox('Serpent failed to start', `Could not initialize the local database:\n\n${(err as Error).message}`);
+    app.quit();
+    return;
+  }
   // Clear stale state from previous sessions that crashed mid-crawl.
   const interrupted = markRunningCrawlsAsInterrupted();
   if (interrupted > 0) {
