@@ -58,7 +58,11 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - **Bright Data integration** to bypass bot protection on difficult sites
 - **JavaScript rendering** via Electron's built-in Chromium — no headless browser needed
 - **robots.txt** parsing and enforcement
-- **Scoping modes** — full domain, single subdomain, or an exact **URL list** (paste, clipboard, sitemap, or file — across multiple domains)
+- **Scoping modes** — full domain, single subdomain, start-folder only, or an exact **URL list** (paste, clipboard, sitemap, or file — across multiple domains)
+- **Include / exclude URL patterns** (regex) and **URL parameter stripping** (`utm_*`, `fbclid`, …) to keep crawls focused and deduplicated
+- **Configurable User-Agent** (Googlebot, Bingbot, Chrome presets or custom), **custom HTTP headers**, **HTTP Basic auth**, and **session cookies** for authenticated crawls
+- **Scheduled crawls** — recurring local crawls that run while the app is open
+- **Headless CLI mode** — `serpent --headless-crawl=<url> --output=pages.csv` crawls and exports without opening a window
 - **Pause / Resume / Stop** with persistent crawl state and cost continuity
 - **Crawl comparison** — diff any two crawls to see new, removed, and changed pages
 </details>
@@ -72,7 +76,8 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - Image inventory — alt text, dimensions, format, and lazy-load detection
 - Word count, page size, and text-to-HTML ratio
 - **Redirect chain detection** — every hop with status codes
-- **Duplicate content detection** — SHA-256 content hashing
+- **Duplicate content detection** — exact (SHA-256) and **near-duplicate** (64-bit simhash, ~90%+ similarity)
+- **Soft-404 detection** — 200-status pages whose content reads like an error page
 - **Hreflang validation** — extracts and validates `hreflang`/`x-default`
 - **Custom extraction** — pull any data with your own CSS selectors
 - **Structured data / JSON-LD** — Schema.org type extraction + validation
