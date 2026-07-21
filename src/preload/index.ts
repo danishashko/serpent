@@ -95,6 +95,14 @@ contextBridge.exposeInMainWorld('api', {
   perfAnalyze: (crawlId: string) => ipcRenderer.invoke(IPC.PERF_ANALYZE, crawlId),
   perfGetScores: (crawlId: string) => ipcRenderer.invoke(IPC.PERF_GET_SCORES, crawlId),
 
+  // PageSpeed Insights / CWV
+  psiAnalyze: (payload: { crawlId: string; strategy?: 'mobile' | 'desktop' }) =>
+    ipcRenderer.invoke(IPC.PSI_ANALYZE, payload),
+  psiGetScores: (crawlId: string) => ipcRenderer.invoke(IPC.PSI_GET_SCORES, crawlId),
+  onPsiProgress: (cb: (data: { done: number; total: number; url: string }) => void) => {
+    ipcRenderer.on('psi:progress', (_event, data) => cb(data));
+  },
+
   // Reports
   reportGeneratePdf: (data: { config: ReportConfig; crawlId: string }) =>
     ipcRenderer.invoke(IPC.REPORT_GENERATE_PDF, data),

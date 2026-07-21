@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
-import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, IssueRecommendation, UsageLog, CrawlDiff, CrawlDiffChange, GEOScore, PerformanceScore, CrawlSchedule } from '../types/index';
+import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, IssueRecommendation, UsageLog, CrawlDiff, CrawlDiffChange, GEOScore, PerformanceScore, CrawlSchedule, PsiScore } from '../types/index';
 
 let db: Database.Database;
 
@@ -275,6 +275,29 @@ function createTables(): void {
 
   // Simhash fingerprint for near-duplicate detection — migration for existing DBs
   try { db.exec('ALTER TABLE pages ADD COLUMN simhash TEXT'); } catch { /* already exists */ }
+
+  // PageSpeed Insights / CWV scores
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS psi_scores (
+      page_id TEXT NOT NULL,
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      strategy TEXT NOT NULL DEFAULT 'mobile',
+      performance_score REAL,
+      lcp_ms REAL,
+      cls_value REAL,
+      tbt_ms REAL,
+      fcp_ms REAL,
+      speed_index_ms REAL,
+      field_lcp_ms REAL,
+      field_inp_ms REAL,
+      field_cls REAL,
+      field_overall_category TEXT,
+      fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (page_id, strategy)
+    );
+    CREATE INDEX IF NOT EXISTS idx_psi_scores_crawl_id ON psi_scores(crawl_id);
+  `);
 
   // Scheduled crawls
   db.exec(`
@@ -1054,6 +1077,42 @@ export function getExternalLinks(crawlId: string): LinkData[] {
       is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr
     FROM links WHERE crawl_id = ? AND is_internal = 0
   `).all(crawlId) as LinkData[];
+}
+
+// ----- PageSpeed Insights / CWV scores -----
+
+export function upsertPsiScoresBatch(scores: PsiScore[]): void {
+  const stmt = db.prepare(`
+    INSERT INTO psi_scores (page_id, crawl_id, url, strategy, performance_score, lcp_ms, cls_value, tbt_ms, fcp_ms, speed_index_ms, field_lcp_ms, field_inp_ms, field_cls, field_overall_category, fetched_at)
+    VALUES (@pageId, @crawlId, @url, @strategy, @performanceScore, @lcpMs, @clsValue, @tbtMs, @fcpMs, @speedIndexMs, @fieldLcpMs, @fieldInpMs, @fieldCls, @fieldOverallCategory, @fetchedAt)
+    ON CONFLICT(page_id, strategy) DO UPDATE SET
+      performance_score = excluded.performance_score,
+      lcp_ms = excluded.lcp_ms,
+      cls_value = excluded.cls_value,
+      tbt_ms = excluded.tbt_ms,
+      fcp_ms = excluded.fcp_ms,
+      speed_index_ms = excluded.speed_index_ms,
+      field_lcp_ms = excluded.field_lcp_ms,
+      field_inp_ms = excluded.field_inp_ms,
+      field_cls = excluded.field_cls,
+      field_overall_category = excluded.field_overall_category,
+      fetched_at = excluded.fetched_at
+  `);
+  const insertMany = db.transaction((rows: PsiScore[]) => {
+    for (const row of rows) stmt.run(row as unknown as Record<string, unknown>);
+  });
+  insertMany(scores);
+}
+
+export function getPsiScoresByCrawl(crawlId: string): PsiScore[] {
+  return db.prepare(`
+    SELECT page_id as pageId, crawl_id as crawlId, url, strategy,
+      performance_score as performanceScore, lcp_ms as lcpMs, cls_value as clsValue,
+      tbt_ms as tbtMs, fcp_ms as fcpMs, speed_index_ms as speedIndexMs,
+      field_lcp_ms as fieldLcpMs, field_inp_ms as fieldInpMs, field_cls as fieldCls,
+      field_overall_category as fieldOverallCategory, fetched_at as fetchedAt
+    FROM psi_scores WHERE crawl_id = ? ORDER BY performance_score ASC
+  `).all(crawlId) as PsiScore[];
 }
 
 // ----- Scheduled crawls -----

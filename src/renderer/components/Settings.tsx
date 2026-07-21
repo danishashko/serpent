@@ -25,6 +25,7 @@ const defaultSettings: AppSettings = {
   openrouterModel: 'deepseek/deepseek-v4-flash',
   defaultEngine: 'local',
   defaultStorageMode: 'database',
+  psiApiKey: null,
 };
 
 const AI_PROVIDERS: { value: AIProvider; label: string; icon: string }[] = [
@@ -409,6 +410,28 @@ export default function Settings({ showToast }: Props): React.ReactElement {
           >
             {testingAI ? <><span className="spinner" /> Testing…</> : `🔌 Test ${AI_PROVIDERS.find(p => p.value === selectedProvider)?.label}`}
           </button>
+        </div>
+      </section>
+
+      {/* PageSpeed Insights */}
+      <section style={{ marginBottom: 28 }}>
+        <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14 }}>
+          📈 PageSpeed Insights (Core Web Vitals)
+        </h3>
+        <div>
+          <label className="label">API Key <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>(optional — free, raises quota to 25k/day)</span></label>
+          <input
+            className="input"
+            data-testid="psi-api-key"
+            type="password"
+            placeholder="AIza… (from Google Cloud Console, PageSpeed Insights API)"
+            value={settings.psiApiKey ?? ''}
+            onChange={e => set('psiApiKey', e.target.value || null)}
+            style={{ fontFamily: 'monospace' }}
+          />
+          <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+            Without a key, CWV fetches are limited to a few URLs per run.
+          </p>
         </div>
       </section>
 

@@ -102,6 +102,7 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - **Prioritized issue list** — sorted by impact, color-coded by severity
 - **Image optimization analysis** — missing dimensions, unoptimized formats, missing lazy-load
 - **Internal link equity score** — PageRank-style algorithm to surface your most important pages
+- **Core Web Vitals via PageSpeed Insights** — real Lighthouse lab metrics (LCP, CLS, TBT, FCP) plus CrUX field data (LCP, INP, CLS, FAST/AVERAGE/SLOW rating) per URL; keyless or with a free API key
 </details>
 
 <details>

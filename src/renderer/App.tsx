@@ -4,7 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -72,6 +72,9 @@ declare global {
       geoGetScores: (crawlId: string) => Promise<GEOScore[]>;
       perfAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
       perfGetScores: (crawlId: string) => Promise<PerformanceScore[]>;
+      psiAnalyze: (payload: { crawlId: string; strategy?: 'mobile' | 'desktop' }) => Promise<{ success: boolean; total?: number; errors?: number; skippedUnreachable?: number; capped?: number; error?: string }>;
+      psiGetScores: (crawlId: string) => Promise<PsiScore[]>;
+      onPsiProgress: (cb: (data: { done: number; total: number; url: string }) => void) => void;
       reportGeneratePdf: (data: { config: ReportConfig; crawlId: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
       discoverCompetitors: (data: { crawlId: string; domain: string; keywords: string[]; country?: string }) => Promise<{ success: boolean; results?: DiscoverResult[]; total?: number; error?: string }>;
       discoverContentGaps: (data: { crawlId: string; domain: string; topics: string[]; country?: string }) => Promise<{ success: boolean; gaps?: ContentGap[]; total?: number; error?: string }>;

@@ -270,6 +270,8 @@ export interface AppSettings {
   openrouterModel: string;
   defaultEngine: CrawlEngine;
   defaultStorageMode: StorageMode;
+  /** Google PageSpeed Insights API key (optional — keyless works at very low volume) */
+  psiApiKey: string | null;
 }
 
 export interface UsageStats {
@@ -368,6 +370,31 @@ export interface PerformanceIssue {
   severity: IssueSeverity;
   message: string;
   recommendation: string;
+}
+
+// ── PageSpeed Insights / Core Web Vitals ──
+
+export type PsiStrategy = 'mobile' | 'desktop';
+
+export interface PsiScore {
+  pageId: string;
+  crawlId: string;
+  url: string;
+  strategy: PsiStrategy;
+  /** Lighthouse performance score 0–100 */
+  performanceScore: number | null;
+  // Lab metrics (Lighthouse)
+  lcpMs: number | null;
+  clsValue: number | null;
+  tbtMs: number | null;
+  fcpMs: number | null;
+  speedIndexMs: number | null;
+  // CrUX field data (28-day real users) — null when the URL has too little traffic
+  fieldLcpMs: number | null;
+  fieldInpMs: number | null;
+  fieldCls: number | null;
+  fieldOverallCategory: string | null; // FAST | AVERAGE | SLOW
+  fetchedAt: string;
 }
 
 // ── Competitor Discovery / Content Gap ──
@@ -632,6 +659,10 @@ export const IPC = {
   // Performance
   PERF_ANALYZE: 'perf:analyze',
   PERF_GET_SCORES: 'perf:get-scores',
+
+  // PageSpeed Insights / CWV
+  PSI_ANALYZE: 'psi:analyze',
+  PSI_GET_SCORES: 'psi:get-scores',
 
   // Report
   REPORT_GENERATE_PDF: 'report:generate-pdf',

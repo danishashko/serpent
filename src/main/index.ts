@@ -15,9 +15,10 @@ import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, 
 import { generateSitemap as buildSitemap } from './sitemap-generator';
 import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
-import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress, PsiStrategy } from '../types/index';
 import { v4 as uuidv4 } from 'uuid';
-import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules } from './database';
+import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules, upsertPsiScoresBatch, getPsiScoresByCrawl } from './database';
+import { analyzePsiBatch, PSI_MAX_URLS_KEYLESS } from './psi-client';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
 import { startMcpServer } from './mcp-server';
@@ -584,6 +585,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const anthropicApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'anthropic_api_key');
   const geminiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key');
   const openrouterApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'openrouter_api_key');
+  const psiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'psi_api_key');
 
   const settings: AppSettings = {
     brightDataApiKey: apiKey || null,
@@ -605,6 +607,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
     openrouterModel: getConfig('openrouter_model') || 'deepseek/deepseek-v4-flash',
     defaultEngine: (getConfig('default_engine') as AppSettings['defaultEngine']) || 'local',
     defaultStorageMode: (getConfig('default_storage_mode') as AppSettings['defaultStorageMode']) || 'database',
+    psiApiKey: psiApiKey || null,
   };
 
   return settings;
@@ -673,6 +676,13 @@ ipcMain.handle(IPC.SETTINGS_SAVE, async (_event, settings: Partial<AppSettings>)
       }
     }
     if (settings.openrouterModel !== undefined) setConfig('openrouter_model', settings.openrouterModel);
+    if (settings.psiApiKey !== undefined) {
+      if (settings.psiApiKey) {
+        await keytar.setPassword(KEYTAR_SERVICE, 'psi_api_key', settings.psiApiKey);
+      } else {
+        await keytar.deletePassword(KEYTAR_SERVICE, 'psi_api_key').catch(() => {});
+      }
+    }
     if (settings.defaultEngine !== undefined) setConfig('default_engine', settings.defaultEngine);
     if (settings.defaultStorageMode !== undefined) setConfig('default_storage_mode', settings.defaultStorageMode);
 
@@ -967,6 +977,43 @@ ipcMain.handle(IPC.PERF_ANALYZE, async (_event, crawlId: string) => {
 
 ipcMain.handle(IPC.PERF_GET_SCORES, (_event, crawlId: string) => {
   return getPerformanceScoresByCrawl(crawlId);
+});
+
+// ─── PageSpeed Insights / CWV IPC Handlers ─────────────────────────────────────
+
+ipcMain.handle(IPC.PSI_ANALYZE, async (_event, payload: { crawlId: string; strategy?: PsiStrategy }) => {
+  try {
+    const strategy: PsiStrategy = payload.strategy === 'desktop' ? 'desktop' : 'mobile';
+    const apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'psi_api_key');
+    const pages = getPagesByCrawl(payload.crawlId)
+      .filter(p => p.statusCode !== null && p.statusCode >= 200 && p.statusCode < 300);
+    if (pages.length === 0) {
+      return { success: false, error: 'No 2xx pages in this crawl to analyze.' };
+    }
+    const result = await analyzePsiBatch(pages, strategy, apiKey, (done, total, url) => {
+      mainWindow?.webContents.send('psi:progress', { done, total, url });
+    });
+    if (result.scores.length > 0) upsertPsiScoresBatch(result.scores);
+    if (result.scores.length === 0 && result.skippedUnreachable === pages.length) {
+      return { success: false, error: 'PSI can only test public URLs — every page in this crawl is on a local/private host.' };
+    }
+    if (result.scores.length === 0 && result.errors.length > 0) {
+      return { success: false, error: `PSI failed for all URLs (first: ${result.errors[0].error}). Keyless quota is tiny — add a free API key in Settings.` };
+    }
+    return {
+      success: true,
+      total: result.scores.length,
+      errors: result.errors.length,
+      skippedUnreachable: result.skippedUnreachable,
+      capped: !apiKey && pages.length > PSI_MAX_URLS_KEYLESS ? PSI_MAX_URLS_KEYLESS : undefined,
+    };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.PSI_GET_SCORES, (_event, crawlId: string) => {
+  return getPsiScoresByCrawl(crawlId);
 });
 
 // ─── Report IPC Handlers ────────────────────────────────────────────────────────

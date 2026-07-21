@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap } from '../../types/index';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore } from '../../types/index';
 import CrawlComparison from './CrawlComparison';
 import SiteMap from './SiteMap';
 import ExportModal from './ExportModal';
@@ -188,6 +188,21 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   const [showCrawlPicker, setShowCrawlPicker] = useState(false);
   const [geoAnalyzing, setGeoAnalyzing] = useState(false);
   const [perfAnalyzing, setPerfAnalyzing] = useState(false);
+  // PageSpeed Insights / CWV
+  const [psiScores, setPsiScores] = useState<PsiScore[]>([]);
+  const [psiAnalyzing, setPsiAnalyzing] = useState(false);
+  const [psiStrategy, setPsiStrategy] = useState<'mobile' | 'desktop'>('mobile');
+  const [psiProgress, setPsiProgress] = useState<{ done: number; total: number; url: string } | null>(null);
+
+  useEffect(() => {
+    if (!crawlId) { setPsiScores([]); return; }
+    window.api.psiGetScores(crawlId).then(setPsiScores).catch(() => setPsiScores([]));
+  }, [crawlId]);
+
+  useEffect(() => {
+    window.api.onPsiProgress?.(data => setPsiProgress(data));
+    return () => window.api.removeAllListeners('psi:progress');
+  }, []);
   const [reportGenerating, setReportGenerating] = useState(false);
   const reportTitle = 'SEO Audit Report';
   const reportCompany = '';
@@ -1393,6 +1408,114 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   ))}
                 </tbody>
               </table>
+
+              {/* ── Core Web Vitals via PageSpeed Insights ── */}
+              <div data-testid="psi-section" style={{ borderTop: '1px solid var(--border)', marginTop: 8 }}>
+                <div style={{ padding: '8px 12px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>
+                    Core Web Vitals (PageSpeed Insights)
+                  </span>
+                  <select
+                    className="input"
+                    data-testid="psi-strategy"
+                    style={{ width: 110, padding: '4px 6px', fontSize: 11 }}
+                    value={psiStrategy}
+                    onChange={e => setPsiStrategy(e.target.value as 'mobile' | 'desktop')}
+                    disabled={psiAnalyzing}
+                  >
+                    <option value="mobile">📱 Mobile</option>
+                    <option value="desktop">🖥 Desktop</option>
+                  </select>
+                  <button
+                    className="btn-primary"
+                    data-testid="psi-fetch"
+                    style={{ padding: '5px 12px', fontSize: 12 }}
+                    disabled={psiAnalyzing || !crawlId || pages.length === 0}
+                    onClick={async () => {
+                      if (!crawlId) return;
+                      setPsiAnalyzing(true);
+                      setPsiProgress(null);
+                      try {
+                        const result = await window.api.psiAnalyze({ crawlId, strategy: psiStrategy });
+                        if (result.success) {
+                          const suffix = result.capped ? ` (keyless — capped at ${result.capped} URLs, add a free API key in Settings for more)` : '';
+                          showToast(`CWV fetched for ${result.total} URL${result.total === 1 ? '' : 's'}${result.errors ? `, ${result.errors} failed` : ''}${suffix}`, 'success');
+                          setPsiScores(await window.api.psiGetScores(crawlId));
+                        } else {
+                          showToast(result.error || 'PSI analysis failed', 'error');
+                        }
+                      } catch (err) {
+                        showToast(String(err), 'error');
+                      } finally {
+                        setPsiAnalyzing(false);
+                        setPsiProgress(null);
+                      }
+                    }}
+                  >
+                    {psiAnalyzing ? '⏳ Fetching…' : '🌐 Fetch CWV'}
+                  </button>
+                  {psiAnalyzing && psiProgress && psiProgress.total > 0 && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {psiProgress.done}/{psiProgress.total} {psiProgress.url ? `— ${psiProgress.url}` : ''}
+                    </span>
+                  )}
+                  {!psiAnalyzing && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {psiScores.length > 0 ? `${psiScores.length} URL${psiScores.length === 1 ? '' : 's'} scored` : 'Real Lighthouse + CrUX field data from Google. Public URLs only, ~15 s per URL.'}
+                    </span>
+                  )}
+                </div>
+                {psiScores.length > 0 && (
+                  <table className="data-table" data-testid="psi-table">
+                    <thead>
+                      <tr>
+                        <th>URL</th>
+                        <th>Device</th>
+                        <th>Perf</th>
+                        <th>LCP (lab)</th>
+                        <th>CLS (lab)</th>
+                        <th>TBT</th>
+                        <th>FCP</th>
+                        <th>LCP (field)</th>
+                        <th>INP (field)</th>
+                        <th>CLS (field)</th>
+                        <th>CrUX Rating</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {psiScores.map(s => {
+                        const ms = (v: number | null) => v === null ? '—' : v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`;
+                        const scoreColor = (v: number | null) => v === null ? 'var(--text-muted)' : v >= 90 ? 'var(--accent-green)' : v >= 50 ? 'var(--accent-orange)' : 'var(--accent-red)';
+                        return (
+                          <tr key={s.pageId + s.strategy}>
+                            <td style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <a href={s.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{s.url}</a>
+                            </td>
+                            <td style={{ fontSize: 11 }}>{s.strategy}</td>
+                            <td style={{ fontWeight: 700, color: scoreColor(s.performanceScore) }}>{s.performanceScore ?? '—'}</td>
+                            <td style={{ fontVariantNumeric: 'tabular-nums' }}>{ms(s.lcpMs)}</td>
+                            <td style={{ fontVariantNumeric: 'tabular-nums' }}>{s.clsValue === null ? '—' : s.clsValue.toFixed(3)}</td>
+                            <td style={{ fontVariantNumeric: 'tabular-nums' }}>{ms(s.tbtMs)}</td>
+                            <td style={{ fontVariantNumeric: 'tabular-nums' }}>{ms(s.fcpMs)}</td>
+                            <td style={{ fontVariantNumeric: 'tabular-nums' }}>{ms(s.fieldLcpMs)}</td>
+                            <td style={{ fontVariantNumeric: 'tabular-nums' }}>{ms(s.fieldInpMs)}</td>
+                            <td style={{ fontVariantNumeric: 'tabular-nums' }}>{s.fieldCls === null ? '—' : s.fieldCls.toFixed(2)}</td>
+                            <td style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: s.fieldOverallCategory === 'FAST' ? 'var(--accent-green)'
+                                : s.fieldOverallCategory === 'AVERAGE' ? 'var(--accent-orange)'
+                                : s.fieldOverallCategory === 'SLOW' ? 'var(--accent-red)' : 'var(--text-muted)',
+                            }}>
+                              {s.fieldOverallCategory ?? 'no data'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </div>
         )}
