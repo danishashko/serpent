@@ -30,6 +30,7 @@ import {
   getLatestIncompleteCrawl,
 } from './database';
 import { parseRobotsTxt, checkPath, type RobotsRuleSet } from './robots-tester';
+import { compilePatterns, urlPassesFilters, stripQueryParams, startPathPrefix, isWithinStartPath, SimpleCookieJar } from './crawl-filters';
 
 // ─── Robots.txt enforcement (delegated to robots-tester.ts) ────────────────────
 // Re-exported here so existing callers (and tests) keep working.
@@ -55,6 +56,10 @@ export class CrawlOrchestrator extends EventEmitter {
   private bdBrowserAuth: string | null = null;
   private robotsRules: RobotsRuleSet | null = null;
   private robotsUserAgent: string = 'Serpent';
+  private includeRe: RegExp[] = [];
+  private excludeRe: RegExp[] = [];
+  private startPath: string | null = null;
+  private cookieJar: SimpleCookieJar | null = null;
 
   // Rate limiting: minimum spacing (ms) between request starts. 0 = unlimited.
   // We enforce this with an atomic "slot reservation" gate rather than p-queue's
@@ -137,6 +142,10 @@ export class CrawlOrchestrator extends EventEmitter {
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
     this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'Serpent';
+    this.includeRe = compilePatterns(config.includePatterns);
+    this.excludeRe = compilePatterns(config.excludePatterns);
+    this.startPath = config.mode === 'spider' && config.restrictToStartPath ? startPathPrefix(firstUrl) : null;
+    this.cookieJar = config.enableCookies ? new SimpleCookieJar() : null;
 
     if (config.respectRobots) {
       await this.loadRobots(this.baseOrigin, config.customRobotsTxt);
@@ -281,6 +290,10 @@ export class CrawlOrchestrator extends EventEmitter {
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
     this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'Serpent';
+    this.includeRe = compilePatterns(config.includePatterns);
+    this.excludeRe = compilePatterns(config.excludePatterns);
+    this.startPath = config.mode === 'spider' && config.restrictToStartPath ? startPathPrefix(firstUrl) : null;
+    this.cookieJar = config.enableCookies ? new SimpleCookieJar() : null;
 
     if (config.respectRobots) {
       await this.loadRobots(this.baseOrigin, config.customRobotsTxt);
@@ -368,7 +381,7 @@ export class CrawlOrchestrator extends EventEmitter {
     // and fragments never create duplicate queue entries.
     let parsed: URL;
     try {
-      parsed = new URL(url);
+      parsed = new URL(stripQueryParams(url, this.config.stripUrlParams));
       parsed.hash = '';
       url = parsed.toString();
     } catch {
@@ -378,6 +391,13 @@ export class CrawlOrchestrator extends EventEmitter {
     if (this.visited.has(url) || this.pending.has(url)) return;
     if (this.config.maxUrls > 0 && this.totalQueued >= this.config.maxUrls) return;
     if (this.config.maxDepth > 0 && depth > this.config.maxDepth) return;
+
+    // Include/exclude patterns and start-folder scoping apply to discovered
+    // URLs only — the seed (and list-mode URLs, all depth 0) always crawl.
+    if (depth > 0) {
+      if (!urlPassesFilters(url, this.includeRe, this.excludeRe)) return;
+      if (this.startPath && !isWithinStartPath(parsed.pathname, this.startPath)) return;
+    }
 
     // Scope check
     try {
@@ -443,7 +463,7 @@ export class CrawlOrchestrator extends EventEmitter {
       let result: Awaited<ReturnType<typeof crawlPageLocal>>;
 
       if (this.config.engine === 'local') {
-        result = await crawlPageLocal(url, this.crawlId, depth, this.config, this.baseOrigin);
+        result = await crawlPageLocal(url, this.crawlId, depth, this.config, this.baseOrigin, this.cookieJar ?? undefined);
       } else if (this.config.engine === 'brightdata-browser') {
         if (!this.bdBrowserAuth) {
           this.emit('error', new Error('Bright Data Browser API credentials not configured'));

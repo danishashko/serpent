@@ -6,6 +6,7 @@ import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { CrawlConfig, PageData, LinkData, ImageData } from '../types/index';
 import { CrawlResult } from './crawler-local';
+import { simhash64 } from './simhash';
 
 function normalizeUrlForComparison(url: string): string {
   try {
@@ -243,6 +244,7 @@ function buildResultFromHtml(
   let textRatio: number | null = null;
   const hreflangEntries: { hreflang: string; href: string }[] = [];
   let contentHash: string | null = null;
+  let simhash: string | null = null;
   const customExtractionResults: { name: string; selector: string; value: string | null }[] = [];
   // OG / Twitter Card
   let ogTitle: string | null = null;
@@ -379,6 +381,7 @@ function buildResultFromHtml(
     // Content hash (SHA-256 of normalized body text)
     if (bodyText.length > 0) {
       contentHash = createHash('sha256').update(bodyText).digest('hex');
+      simhash = simhash64(bodyText);
     }
 
     // Structured Data extraction (JSON-LD + Microdata)
@@ -509,6 +512,7 @@ function buildResultFromHtml(
     xContentTypeOptions: null,
     imageCount: images.length,
     linkScore: 0,
+    simhash,
   };
 
   return { page, links, images, discoveredUrls, redirectChain: [], hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults, bytesDownloaded: pageSizeBytes };

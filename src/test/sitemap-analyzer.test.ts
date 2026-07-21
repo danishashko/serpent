@@ -38,6 +38,7 @@ function p(url: string, over: Partial<PageData> = {}): PageData {
     schemaTypes: null, schemaJson: null, schemaErrors: null, hasStructuredData: false,
     hasHSTS: false, hasCSP: false, xFrameOptions: null, xContentTypeOptions: null,
     imageCount: 0, linkScore: 0,
+    simhash: null,
     ...over,
   };
 }

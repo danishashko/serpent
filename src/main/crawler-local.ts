@@ -5,6 +5,8 @@ import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { BrowserWindow, session } from 'electron';
 import { PageData, LinkData, ImageData, CrawlConfig } from '../types/index';
+import { SimpleCookieJar } from './crawl-filters';
+import { simhash64 } from './simhash';
 
 // Approximate pixel widths per character (Arial 13px, common browser default)
 const AVG_CHAR_PX = 7.2;
@@ -12,6 +14,32 @@ const AVG_CHAR_PX = 7.2;
 // Cap response bodies so a crawled URL serving a huge file (video, archive,
 // gzip bomb) can't buffer gigabytes into the main process.
 const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
+
+export const DEFAULT_USER_AGENT = 'Serpent/1.0 (SEO Crawler; +https://github.com/danishashko/serpent)';
+
+/** Request headers for a crawl: UA, custom headers, basic auth, cookies. */
+export function buildRequestHeaders(
+  config: CrawlConfig,
+  url: string,
+  cookieJar?: SimpleCookieJar
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    'User-Agent': config.userAgent?.trim() || DEFAULT_USER_AGENT,
+    'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
+  for (const h of config.customHeaders ?? []) {
+    const name = h.name?.trim();
+    if (name && h.value != null) headers[name] = h.value;
+  }
+  if (config.authUser) {
+    headers['Authorization'] =
+      'Basic ' + Buffer.from(`${config.authUser}:${config.authPass ?? ''}`).toString('base64');
+  }
+  const cookie = cookieJar?.getCookieHeader(url);
+  if (cookie) headers['Cookie'] = cookie;
+  return headers;
+}
 
 function estimatePixelWidth(text: string): number {
   return Math.round(text.length * AVG_CHAR_PX);
@@ -88,7 +116,8 @@ function installHeaderHook(): void {
 
 async function fetchWithElectronRenderer(
   url: string,
-  timeout: number
+  timeout: number,
+  config: CrawlConfig
 ): Promise<{ html: string; statusCode: number; responseTimeMs: number; headers: Record<string, string> | null }> {
   const startTime = Date.now();
   let statusCode = 0;
@@ -135,7 +164,25 @@ async function fetchWithElectronRenderer(
           }
         );
 
-        win.webContents.loadURL(url)
+        // UA + auth + custom headers apply to the rendered navigation too.
+        // Cookies persist natively via the session's cookie store, so the
+        // JS-render path gets session-cookie support for free.
+        const loadOptions: Electron.LoadURLOptions = {
+          userAgent: config.userAgent?.trim() || DEFAULT_USER_AGENT,
+        };
+        const extraHeaderLines: string[] = [];
+        for (const h of config.customHeaders ?? []) {
+          const name = h.name?.trim();
+          if (name && h.value != null) extraHeaderLines.push(`${name}: ${h.value}`);
+        }
+        if (config.authUser) {
+          extraHeaderLines.push(
+            'Authorization: Basic ' + Buffer.from(`${config.authUser}:${config.authPass ?? ''}`).toString('base64')
+          );
+        }
+        if (extraHeaderLines.length > 0) loadOptions.extraHeaders = extraHeaderLines.join('\n');
+
+        win.webContents.loadURL(url, loadOptions)
           .then(() => {
             // loadURL resolves when did-finish-load fires → page + JS parsed
             resolve();
@@ -191,7 +238,8 @@ export async function crawlPageLocal(
   crawlId: string,
   depth: number,
   config: CrawlConfig,
-  baseOrigin: string
+  baseOrigin: string,
+  cookieJar?: SimpleCookieJar
 ): Promise<CrawlResult> {
   const startTime = Date.now();
   let statusCode: number | null = null;
@@ -207,7 +255,7 @@ export async function crawlPageLocal(
   if (config.jsRender) {
     // --- Electron headless renderer ---
     try {
-      const rendered = await fetchWithElectronRenderer(url, config.timeout || 10000);
+      const rendered = await fetchWithElectronRenderer(url, config.timeout || 10000, config);
       html = rendered.html;
       statusCode = rendered.statusCode;
       responseTimeMs = rendered.responseTimeMs;
@@ -230,15 +278,12 @@ export async function crawlPageLocal(
           maxRedirects: 0,
           maxContentLength: MAX_RESPONSE_BYTES,
           maxBodyLength: MAX_RESPONSE_BYTES,
-          headers: {
-            'User-Agent': 'Serpent/1.0 (SEO Crawler; +https://github.com/danishashko/serpent)',
-            'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
+          headers: buildRequestHeaders(config, currentUrl, cookieJar),
           responseType: 'text',
           validateStatus: () => true, // Don't throw on 4xx/5xx
         });
         response = resp;
+        cookieJar?.storeFromResponse(currentUrl, resp.headers['set-cookie']);
 
         const code = resp.status;
         const isRedirect = code >= 300 && code < 400 && resp.headers['location'];
@@ -319,6 +364,7 @@ export async function crawlPageLocal(
   let textRatio: number | null = null;
   const hreflangEntries: { hreflang: string; href: string }[] = [];
   let contentHash: string | null = null;
+  let simhash: string | null = null;
   const customExtractionResults: { name: string; selector: string; value: string | null }[] = [];
   // OG / Twitter Card
   let ogTitle: string | null = null;
@@ -494,6 +540,7 @@ export async function crawlPageLocal(
     const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
     if (bodyText.length > 0) {
       contentHash = createHash('sha256').update(bodyText).digest('hex');
+      simhash = simhash64(bodyText);
     }
 
     // Structured Data extraction (JSON-LD + Microdata)
@@ -618,6 +665,7 @@ export async function crawlPageLocal(
     xContentTypeOptions,
     imageCount: images.length,
     linkScore: 0,
+    simhash,
   };
 
   return { page, links, images, discoveredUrls, redirectChain, hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults };

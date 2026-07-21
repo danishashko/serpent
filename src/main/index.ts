@@ -15,13 +15,30 @@ import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, 
 import { generateSitemap as buildSitemap } from './sitemap-generator';
 import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
-import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress } from '../types/index';
+import { v4 as uuidv4 } from 'uuid';
+import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules } from './database';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
 import { startMcpServer } from './mcp-server';
 
 const KEYTAR_SERVICE = 'serpent';
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
+
+// ─── Headless CLI mode ─────────────────────────────────────────────────────────
+// `serpent --headless-crawl=<url> [--max-urls=N] [--depth=N] [--output=file.csv]
+//          [--js-render] [--no-robots] [--user-agent="UA"]`
+// Crawls without opening a window, writes a pages CSV, and exits.
+// Use the --flag=value form: Electron's CLI rejects bare value arguments.
+
+function argValue(flag: string): string | null {
+  for (const a of process.argv) {
+    if (a.startsWith(flag + '=')) return a.slice(flag.length + 1) || null;
+  }
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : null;
+}
+const headlessUrl = argValue('--headless-crawl');
 
 let mainWindow: BrowserWindow | null = null;
 const orchestrator = new CrawlOrchestrator();
@@ -135,15 +152,17 @@ function createWindow(): void {
 // file and MCP port — duplicate page rows and EADDRINUSE. Focus the existing
 // window instead. (Scoped to the userData path, so isolated test instances
 // with distinct --user-data-dir still launch.)
-if (!app.requestSingleInstanceLock()) {
-  app.exit(0);
-}
-app.on('second-instance', () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+if (!headlessUrl) {
+  if (!app.requestSingleInstanceLock()) {
+    app.exit(0);
   }
-});
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
 
 app.whenReady().then(() => {
   console.log('[MAIN] app ready — initializing DB');
@@ -153,8 +172,12 @@ app.whenReady().then(() => {
     // Without this, a DB init failure is an unhandled rejection and the app
     // sits with no window and no error — surface it and exit instead.
     console.error('[MAIN] database init failed:', err);
-    dialog.showErrorBox('Serpent failed to start', `Could not initialize the local database:\n\n${(err as Error).message}`);
-    app.quit();
+    if (headlessUrl) {
+      app.exit(1);
+    } else {
+      dialog.showErrorBox('Serpent failed to start', `Could not initialize the local database:\n\n${(err as Error).message}`);
+      app.quit();
+    }
     return;
   }
   // Clear stale state from previous sessions that crashed mid-crawl.
@@ -162,10 +185,23 @@ app.whenReady().then(() => {
   if (interrupted > 0) {
     console.log(`[MAIN] marked ${interrupted} stale running crawl(s) as interrupted`);
   }
+
+  // Headless CLI: no window, no MCP server, no scheduler — crawl, export, exit.
+  if (headlessUrl) {
+    runHeadlessCrawl(headlessUrl).catch(err => {
+      console.error('[SERPENT] headless crawl failed:', err);
+      app.exit(1);
+    });
+    return;
+  }
+
   console.log('[MAIN] DB initialized — creating window');
   createWindow();
   console.log('[MAIN] window created');
   mcpHttpServer = startMcpServer(orchestrator);
+
+  // Scheduled crawls: check every 30 s while the app is open.
+  setInterval(checkSchedules, 30_000);
 
   // Auto-update (silent check + IPC events, only in production)
   if (!isDev) {
@@ -284,6 +320,140 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
   } catch (err) {
     return { success: false, error: String(err) };
   }
+});
+
+// ─── Headless CLI crawl ────────────────────────────────────────────────────────
+
+async function runHeadlessCrawl(url: string): Promise<void> {
+  const maxUrls = Number(argValue('--max-urls') ?? 500);
+  const maxDepth = Number(argValue('--depth') ?? 10);
+  const output = argValue('--output') ?? path.join(process.cwd(), 'serpent-crawl.csv');
+  const config: CrawlConfig = {
+    startUrl: url,
+    mode: 'spider',
+    engine: 'local',
+    storageMode: 'database',
+    maxUrls,
+    maxDepth,
+    concurrency: 5,
+    respectRobots: !process.argv.includes('--no-robots'),
+    followRedirects: true,
+    restrictToSubdomain: false,
+    timeout: 15000,
+    extractTitles: true,
+    extractMeta: true,
+    extractHeadings: true,
+    extractImages: true,
+    extractLinks: true,
+    extractCanonicals: true,
+    maxCostUsd: 0,
+    jsRender: process.argv.includes('--js-render'),
+    userAgent: argValue('--user-agent') ?? undefined,
+  };
+
+  orchestrator.on('progress', (p: CrawlProgress) => {
+    if (p.completed > 0 && p.completed % 10 === 0) {
+      console.log(`[SERPENT] crawled ${p.completed}/${p.total}`);
+    }
+  });
+  orchestrator.on('complete', (crawlId: string) => {
+    const pages = getPagesByCrawl(crawlId);
+    const csv = buildCsvString(pages.map(pageToFullRow));
+    fs.writeFileSync(output, csv, 'utf8');
+    console.log(`[SERPENT] done — ${pages.length} pages exported to ${output} (crawl ${crawlId})`);
+    setTimeout(() => app.exit(0), 100);
+  });
+
+  console.log(`[SERPENT] headless crawl of ${url} (max ${maxUrls} URLs, depth ${maxDepth})`);
+  await orchestrator.startCrawl(config);
+}
+
+// ─── Scheduled crawls ──────────────────────────────────────────────────────────
+
+function checkSchedules(): void {
+  try {
+    const status = orchestrator.getStatus();
+    if (status === 'running' || status === 'paused') return;
+    const due = getDueSchedules(new Date().toISOString());
+    if (due.length === 0) return;
+    const s = due[0];
+    const config: CrawlConfig = JSON.parse(s.configJson);
+    const now = new Date();
+    const next = new Date(now.getTime() + s.intervalHours * 3_600_000);
+    // Mark before starting so a start failure can't retrigger every 30 s.
+    markScheduleRun(s.id, now.toISOString(), next.toISOString());
+    orchestrator.startCrawl(config)
+      .then(crawlId => {
+        console.log(`[SCHEDULER] started scheduled crawl "${s.name}" → ${crawlId}`);
+        mainWindow?.webContents.send('schedule:triggered', { scheduleId: s.id, name: s.name, crawlId });
+      })
+      .catch(err => console.error('[SCHEDULER] failed to start scheduled crawl:', err));
+  } catch (err) {
+    console.error('[SCHEDULER]', err);
+  }
+}
+
+ipcMain.handle(IPC.SCHEDULE_LIST, () => listSchedules());
+
+ipcMain.handle(IPC.SCHEDULE_ADD, (_event, payload: { name: string; startUrl: string; intervalHours: number; config?: Partial<CrawlConfig> }) => {
+  try {
+    const { name, startUrl, intervalHours } = payload;
+    try {
+      if (!['http:', 'https:'].includes(new URL(startUrl).protocol)) throw new Error('bad protocol');
+    } catch {
+      return { success: false, error: 'Invalid URL. Must be an http/https address.' };
+    }
+    if (!(intervalHours > 0)) {
+      return { success: false, error: 'Interval must be greater than zero.' };
+    }
+    const config: CrawlConfig = {
+      startUrl,
+      mode: 'spider',
+      engine: 'local',
+      storageMode: 'database',
+      maxUrls: 500,
+      maxDepth: 10,
+      concurrency: 5,
+      respectRobots: true,
+      followRedirects: true,
+      restrictToSubdomain: false,
+      timeout: 15000,
+      extractTitles: true,
+      extractMeta: true,
+      extractHeadings: true,
+      extractImages: true,
+      extractLinks: true,
+      extractCanonicals: true,
+      maxCostUsd: 0,
+      ...payload.config,
+    };
+    const now = new Date();
+    const schedule: CrawlSchedule = {
+      id: uuidv4(),
+      name: name?.trim() || startUrl,
+      startUrl,
+      intervalHours,
+      enabled: true,
+      lastRun: null,
+      nextRun: new Date(now.getTime() + intervalHours * 3_600_000).toISOString(),
+      configJson: JSON.stringify(config),
+      createdAt: now.toISOString(),
+    };
+    insertSchedule(schedule);
+    return { success: true, schedule };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.SCHEDULE_DELETE, (_event, id: string) => {
+  deleteSchedule(id);
+  return { success: true };
+});
+
+ipcMain.handle(IPC.SCHEDULE_TOGGLE, (_event, id: string, enabled: boolean) => {
+  setScheduleEnabled(id, enabled);
+  return { success: true };
 });
 
 ipcMain.handle(IPC.CRAWL_PAUSE, () => {

@@ -116,6 +116,16 @@ contextBridge.exposeInMainWorld('api', {
   // Robots.txt tester
   testRobots: (req: RobotsTestRequest) => ipcRenderer.invoke(IPC.ROBOTS_TEST, req),
 
+  // Scheduled crawls
+  scheduleList: () => ipcRenderer.invoke(IPC.SCHEDULE_LIST),
+  scheduleAdd: (payload: { name: string; startUrl: string; intervalHours: number; config?: Partial<CrawlConfig> }) =>
+    ipcRenderer.invoke(IPC.SCHEDULE_ADD, payload),
+  scheduleDelete: (id: string) => ipcRenderer.invoke(IPC.SCHEDULE_DELETE, id),
+  scheduleToggle: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.SCHEDULE_TOGGLE, id, enabled),
+  onScheduleTriggered: (cb: (data: { scheduleId: string; name: string; crawlId: string }) => void) => {
+    ipcRenderer.on('schedule:triggered', (_event, data) => cb(data));
+  },
+
   // Sitemap (XML)
   generateSitemap: (opts: SitemapGenerateOptions) =>
     ipcRenderer.invoke(IPC.SITEMAP_GENERATE, opts),

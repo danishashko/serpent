@@ -279,6 +279,12 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         if (p.statusCode !== null && p.statusCode >= 400) {
           issues.critical.push({ url: p.url, details: `HTTP ${p.statusCode}` });
         }
+        // Soft 404: 200 response whose title/H1 reads like an error page.
+        // Thin-content requirement keeps articles ABOUT 404s from matching.
+        const notFoundRe = /not\s*found|\b404\b|(doesn'?t|does not|no longer) exist|no longer available/i;
+        if (p.statusCode === 200 && (notFoundRe.test(p.title ?? '') || notFoundRe.test(p.h1 ?? '')) && (p.wordCount ?? 0) < 300) {
+          issues.critical.push({ url: p.url, details: 'Soft 404 (200 status but "not found" content)' });
+        }
         if (is2xx && (!p.title || !p.title.trim())) {
           issues.critical.push({ url: p.url, details: 'Missing title' });
         }

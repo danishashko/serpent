@@ -44,6 +44,25 @@ export interface CrawlConfig {
   robotsUserAgent?: string;
   // Rate limiting: max requests per second (0 = unlimited)
   requestsPerSecond?: number;
+  // ── Advanced crawl behavior ──
+  // HTTP User-Agent header sent with every request (default: Serpent UA)
+  userAgent?: string;
+  // Only crawl discovered URLs matching at least one regex (seed/list URLs always crawled)
+  includePatterns?: string[];
+  // Never crawl discovered URLs matching any regex
+  excludePatterns?: string[];
+  // HTTP Basic authentication
+  authUser?: string;
+  authPass?: string;
+  // Extra request headers sent with every request (local engine)
+  customHeaders?: { name: string; value: string }[];
+  // Persist cookies across requests for the duration of the crawl (local engine)
+  enableCookies?: boolean;
+  // Query params to strip from discovered URLs before enqueueing.
+  // Supports trailing-* wildcards (e.g. "utm_*") and "*" for all params.
+  stripUrlParams?: string[];
+  // Restrict spider crawling to URLs under the seed URL's folder
+  restrictToStartPath?: boolean;
 }
 
 export type PageStatus = 'ok' | 'redirect' | 'error' | 'pending';
@@ -100,6 +119,8 @@ export interface PageData {
   xContentTypeOptions: string | null;
   imageCount: number;
   linkScore: number;
+  // 64-bit simhash fingerprint of body text (16 hex chars) for near-duplicate detection
+  simhash: string | null;
 }
 
 export interface LinkData {
@@ -515,6 +536,20 @@ export interface SitemapGenerateOptions {
   defaultPriority?: number;       // 0.0–1.0
 }
 
+// ─── Scheduled crawls ──────────────────────────────────────────────────────────
+
+export interface CrawlSchedule {
+  id: string;
+  name: string;
+  startUrl: string;
+  intervalHours: number;
+  enabled: boolean;
+  lastRun: string | null;
+  nextRun: string;
+  configJson: string;
+  createdAt: string;
+}
+
 // ─── Robots.txt tester ─────────────────────────────────────────────────────────
 
 export interface RobotsTestRequest {
@@ -618,4 +653,10 @@ export const IPC = {
 
   // Robots.txt tester
   ROBOTS_TEST: 'robots:test',
+
+  // Scheduled crawls
+  SCHEDULE_LIST: 'schedule:list',
+  SCHEDULE_ADD: 'schedule:add',
+  SCHEDULE_DELETE: 'schedule:delete',
+  SCHEDULE_TOGGLE: 'schedule:toggle',
 } as const;

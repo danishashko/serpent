@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
-import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, IssueRecommendation, UsageLog, CrawlDiff, CrawlDiffChange, GEOScore, PerformanceScore } from '../types/index';
+import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, IssueRecommendation, UsageLog, CrawlDiff, CrawlDiffChange, GEOScore, PerformanceScore, CrawlSchedule } from '../types/index';
 
 let db: Database.Database;
 
@@ -272,6 +272,24 @@ function createTables(): void {
 
   // External link status code — migration for existing DBs
   try { db.exec('ALTER TABLE links ADD COLUMN status_code INTEGER'); } catch { /* already exists */ }
+
+  // Simhash fingerprint for near-duplicate detection — migration for existing DBs
+  try { db.exec('ALTER TABLE pages ADD COLUMN simhash TEXT'); } catch { /* already exists */ }
+
+  // Scheduled crawls
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schedules (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      start_url TEXT NOT NULL,
+      interval_hours REAL NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_run TEXT,
+      next_run TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 // ----- Crawl operations -----
@@ -352,7 +370,7 @@ export function insertPage(page: PageData): void {
       og_title, og_description, og_image, og_type,
       twitter_card, twitter_title, twitter_description, twitter_image,
       schema_types, schema_json, schema_errors, has_structured_data,
-      has_hsts, has_csp, x_frame_options, x_content_type_options, image_count, link_score
+      has_hsts, has_csp, x_frame_options, x_content_type_options, image_count, link_score, simhash
     ) VALUES (
       @id, @crawlId, @url, @statusCode, @contentType,
       @title, @titleLength, @titlePixelWidth,
@@ -363,7 +381,7 @@ export function insertPage(page: PageData): void {
       @ogTitle, @ogDescription, @ogImage, @ogType,
       @twitterCard, @twitterTitle, @twitterDescription, @twitterImage,
       @schemaTypes, @schemaJson, @schemaErrors, @hasStructuredData,
-      @hasHSTS, @hasCSP, @xFrameOptions, @xContentTypeOptions, @imageCount, @linkScore
+      @hasHSTS, @hasCSP, @xFrameOptions, @xContentTypeOptions, @imageCount, @linkScore, @simhash
     )
   `).run({
     id: page.id,
@@ -414,6 +432,7 @@ export function insertPage(page: PageData): void {
     xContentTypeOptions: page.xContentTypeOptions,
     imageCount: page.imageCount,
     linkScore: page.linkScore,
+    simhash: page.simhash,
   });
 }
 
@@ -467,7 +486,7 @@ export function getPagesByCrawl(crawlId: string): PageData[] {
       schema_errors as schemaErrors, has_structured_data as hasStructuredData,
       has_hsts as hasHSTS, has_csp as hasCSP,
       x_frame_options as xFrameOptions, x_content_type_options as xContentTypeOptions,
-      image_count as imageCount, link_score as linkScore
+      image_count as imageCount, link_score as linkScore, simhash
     FROM pages WHERE crawl_id = ? ORDER BY created_at ASC
   `).all(crawlId) as PageData[];
 }
@@ -973,7 +992,7 @@ export function getPagesByStatusRange(crawlId: string, statusMin: number, status
       schema_errors as schemaErrors, has_structured_data as hasStructuredData,
       has_hsts as hasHSTS, has_csp as hasCSP,
       x_frame_options as xFrameOptions, x_content_type_options as xContentTypeOptions,
-      image_count as imageCount, link_score as linkScore
+      image_count as imageCount, link_score as linkScore, simhash
     FROM pages WHERE crawl_id = ? AND status_code >= ? AND status_code < ?
     ORDER BY created_at ASC
   `).all(crawlId, statusMin, statusMax) as PageData[];
@@ -1003,7 +1022,7 @@ export function getNonIndexablePages(crawlId: string): PageData[] {
       schema_errors as schemaErrors, has_structured_data as hasStructuredData,
       has_hsts as hasHSTS, has_csp as hasCSP,
       x_frame_options as xFrameOptions, x_content_type_options as xContentTypeOptions,
-      image_count as imageCount, link_score as linkScore
+      image_count as imageCount, link_score as linkScore, simhash
     FROM pages WHERE crawl_id = ? AND is_indexable = 0
     ORDER BY created_at ASC
   `).all(crawlId) as PageData[];
@@ -1035,6 +1054,48 @@ export function getExternalLinks(crawlId: string): LinkData[] {
       is_internal as isInternal, anchor_text as anchorText, rel_attr as relAttr
     FROM links WHERE crawl_id = ? AND is_internal = 0
   `).all(crawlId) as LinkData[];
+}
+
+// ----- Scheduled crawls -----
+
+const SCHEDULE_SELECT = `
+  SELECT id, name, start_url as startUrl, interval_hours as intervalHours,
+    enabled, last_run as lastRun, next_run as nextRun,
+    config_json as configJson, created_at as createdAt
+  FROM schedules`;
+
+function toSchedule(row: Record<string, unknown>): CrawlSchedule {
+  return { ...(row as unknown as CrawlSchedule), enabled: !!row.enabled };
+}
+
+export function listSchedules(): CrawlSchedule[] {
+  const rows = db.prepare(SCHEDULE_SELECT + ' ORDER BY created_at ASC').all() as Record<string, unknown>[];
+  return rows.map(toSchedule);
+}
+
+export function insertSchedule(s: CrawlSchedule): void {
+  db.prepare(`
+    INSERT INTO schedules (id, name, start_url, interval_hours, enabled, last_run, next_run, config_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(s.id, s.name, s.startUrl, s.intervalHours, s.enabled ? 1 : 0, s.lastRun, s.nextRun, s.configJson, s.createdAt);
+}
+
+export function deleteSchedule(id: string): void {
+  db.prepare('DELETE FROM schedules WHERE id = ?').run(id);
+}
+
+export function setScheduleEnabled(id: string, enabled: boolean): void {
+  db.prepare('UPDATE schedules SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
+}
+
+export function markScheduleRun(id: string, lastRun: string, nextRun: string): void {
+  db.prepare('UPDATE schedules SET last_run = ?, next_run = ? WHERE id = ?').run(lastRun, nextRun, id);
+}
+
+export function getDueSchedules(nowIso: string): CrawlSchedule[] {
+  const rows = db.prepare(SCHEDULE_SELECT + ' WHERE enabled = 1 AND next_run <= ? ORDER BY next_run ASC')
+    .all(nowIso) as Record<string, unknown>[];
+  return rows.map(toSchedule);
 }
 
 export function closeDatabase(): void {

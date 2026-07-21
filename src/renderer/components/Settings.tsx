@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppSettings, AIProvider } from '../../types/index';
+import { AppSettings, AIProvider, CrawlSchedule } from '../../types/index';
 
 interface Props {
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
@@ -412,6 +412,9 @@ export default function Settings({ showToast }: Props): React.ReactElement {
         </div>
       </section>
 
+      {/* Scheduled crawls */}
+      <ScheduledCrawlsSection showToast={showToast} />
+
       <button
         className="btn-primary"
         onClick={handleSave}
@@ -421,5 +424,125 @@ export default function Settings({ showToast }: Props): React.ReactElement {
         {saving ? <><span className="spinner" /> Saving…</> : '💾 Save Settings'}
       </button>
     </div>
+  );
+}
+
+// ─── Scheduled crawls ─────────────────────────────────────────────────────────
+
+function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
+  const [schedules, setSchedules] = useState<CrawlSchedule[]>([]);
+  const [name, setName] = useState('');
+  const [url, setUrl] = useState('');
+  const [intervalHours, setIntervalHours] = useState(24);
+  const [adding, setAdding] = useState(false);
+
+  const refresh = async () => {
+    try {
+      setSchedules(await window.api.scheduleList());
+    } catch { /* main not ready */ }
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  const handleAdd = async () => {
+    if (!url.trim()) { showToast('Enter a URL to schedule', 'error'); return; }
+    setAdding(true);
+    try {
+      const result = await window.api.scheduleAdd({ name: name.trim(), startUrl: url.trim(), intervalHours });
+      if (result.success) {
+        showToast('Schedule added', 'success');
+        setName(''); setUrl('');
+        await refresh();
+      } else {
+        showToast(result.error ?? 'Failed to add schedule', 'error');
+      }
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const fmtInterval = (h: number) => h >= 1 ? `${h % 1 === 0 ? h : h.toFixed(2)} h` : `${Math.round(h * 60)} min`;
+  const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleString() : '—';
+
+  return (
+    <section data-testid="schedules-section" style={{ marginBottom: 28 }}>
+      <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14 }}>
+        🕑 Scheduled Crawls
+      </h3>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+        Recurring local crawls that run while Serpent is open.
+      </p>
+
+      {schedules.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+          {schedules.map(s => (
+            <div key={s.id} data-testid="schedule-row" style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
+              border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-secondary)', fontSize: 11,
+            }}>
+              <label className="check-row" style={{ margin: 0 }} title={s.enabled ? 'Enabled' : 'Disabled'}>
+                <input
+                  type="checkbox"
+                  checked={s.enabled}
+                  onChange={async e => { await window.api.scheduleToggle(s.id, e.target.checked); await refresh(); }}
+                />
+              </label>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
+                <div style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {s.startUrl} · every {fmtInterval(s.intervalHours)} · next: {fmtTime(s.nextRun)}
+                </div>
+              </div>
+              <button
+                className="btn-ghost"
+                style={{ padding: '2px 8px', fontSize: 11, color: 'var(--accent-red)' }}
+                onClick={async () => { await window.api.scheduleDelete(s.id); await refresh(); }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 90px', gap: 6 }}>
+          <input
+            className="input"
+            data-testid="schedule-name"
+            placeholder="Name (optional)"
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
+          <input
+            className="input"
+            data-testid="schedule-url"
+            type="url"
+            placeholder="https://example.com"
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+          />
+          <input
+            className="input"
+            data-testid="schedule-interval"
+            type="number"
+            min={0.01}
+            step={1}
+            title="Interval (hours)"
+            value={intervalHours}
+            onChange={e => setIntervalHours(Number(e.target.value))}
+          />
+        </div>
+        <button
+          className="btn-ghost"
+          data-testid="schedule-add"
+          style={{ alignSelf: 'flex-start', fontSize: 12 }}
+          onClick={handleAdd}
+          disabled={adding}
+        >
+          {adding ? '⏳ Adding…' : '+ Add Schedule'}
+        </button>
+      </div>
+    </section>
   );
 }

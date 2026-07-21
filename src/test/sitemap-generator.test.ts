@@ -52,6 +52,7 @@ function p(url: string, over: Partial<PageData> = {}): PageData {
     xContentTypeOptions: null,
     imageCount: 0,
     linkScore: 0,
+    simhash: null,
     ...over,
   };
 }

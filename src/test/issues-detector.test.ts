@@ -52,6 +52,7 @@ function page(over: Partial<PageData> = {}): PageData {
     xContentTypeOptions: 'nosniff',
     imageCount: 5,
     linkScore: 50,
+    simhash: null,
     ...over,
   };
 }

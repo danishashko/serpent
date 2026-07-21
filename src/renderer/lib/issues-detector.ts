@@ -19,6 +19,7 @@ import type {
   IssueSeverity,
   PageData,
 } from '../../types/index';
+import { hammingDistanceHex, NEAR_DUPLICATE_MAX_DISTANCE } from '../../main/simhash';
 
 // Configurable thresholds (mirror SF defaults).
 export const TITLE_MAX_LEN = 60;
@@ -40,6 +41,18 @@ export interface DetectContext {
   duplicateMetaUrls: Set<string>;
   duplicateH1Urls: Set<string>;
   duplicateContentUrls: Set<string>;
+  nearDuplicateUrls: Set<string>;
+}
+
+// Soft-404 heuristic: a 200 page whose title/H1 reads like an error page.
+// Thin-content requirement keeps articles ABOUT 404s from matching.
+const NOT_FOUND_RE = /(page|file|document|content)?\s*not\s*found|\berror\s*404\b|\b404\b\s*(error|page)?|(doesn'?t|does not|no longer) exist|no longer available|nothing (was )?found here/i;
+export const SOFT_404_MAX_WORDS = 300;
+
+export function looksLikeSoft404(p: PageData): boolean {
+  if (p.statusCode !== 200) return false;
+  const textMatch = NOT_FOUND_RE.test(p.title ?? '') || NOT_FOUND_RE.test(p.h1 ?? '');
+  return textMatch && (p.wordCount ?? 0) < SOFT_404_MAX_WORDS;
 }
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────
@@ -55,6 +68,9 @@ export const DETECTORS: Detector[] = [
   d('redirect_3xx', 'response_codes', 'info', 'Redirect (3xx)',
     'Page returned a 3xx redirect.',
     (p) => p.statusCode != null && p.statusCode >= 300 && p.statusCode < 400),
+  d('soft_404', 'response_codes', 'critical', 'Soft 404',
+    'Page returns HTTP 200 but its title/H1 reads like a "not found" error — search engines may index an error page.',
+    (p) => looksLikeSoft404(p)),
 
   // ── Page titles
   d('missing_title', 'page_titles', 'critical', 'Missing Title',
@@ -141,9 +157,12 @@ export const DETECTORS: Detector[] = [
   d('low_word_count', 'content', 'opportunity', 'Low Word Count (<200)',
     `Pages with fewer than ${LOW_WORD_COUNT} words may be considered thin content.`,
     (p) => p.statusCode === 200 && p.isIndexable && (p.wordCount ?? 0) > 0 && (p.wordCount ?? 0) < LOW_WORD_COUNT),
-  d('duplicate_content', 'content', 'warning', 'Near-Duplicate Content',
-    'Content body matches another indexable URL by hash.',
+  d('duplicate_content', 'content', 'warning', 'Exact Duplicate Content',
+    'Content body exactly matches another indexable URL by hash.',
     (p, ctx) => p.statusCode === 200 && ctx.duplicateContentUrls.has(p.url)),
+  d('near_duplicate_content', 'content', 'warning', 'Near-Duplicate Content (~90%+ similar)',
+    `Content body is highly similar to another indexable URL (simhash distance ≤ ${NEAR_DUPLICATE_MAX_DISTANCE} of 64 bits).`,
+    (p, ctx) => p.statusCode === 200 && ctx.nearDuplicateUrls.has(p.url)),
 
   // ── Security
   d('missing_hsts', 'security', 'warning', 'Missing HSTS Header',
@@ -280,12 +299,35 @@ function buildContext(pages: PageData[]): DetectContext {
     if (p.h1) push(h1Map, p.h1.trim().toLowerCase(), p.url);
     if (p.contentHash) push(hashMap, p.contentHash, p.url);
   }
+  const duplicateContentUrls = collectDuplicates(hashMap);
   return {
     duplicateTitleUrls: collectDuplicates(titleMap),
     duplicateMetaUrls: collectDuplicates(metaMap),
     duplicateH1Urls: collectDuplicates(h1Map),
-    duplicateContentUrls: collectDuplicates(hashMap),
+    duplicateContentUrls,
+    nearDuplicateUrls: collectNearDuplicates(pages, duplicateContentUrls),
   };
+}
+
+// Pairwise simhash comparison over indexable 200 pages. Exact duplicates are
+// excluded (already flagged by duplicate_content). Capped so pathological
+// crawls can't freeze the UI — 3000² / 2 comparisons is still < 1 s.
+const NEAR_DUP_PAGE_CAP = 3000;
+
+function collectNearDuplicates(pages: PageData[], exactDupes: Set<string>): Set<string> {
+  const eligible = pages
+    .filter(p => p.statusCode === 200 && p.isIndexable && p.simhash && !exactDupes.has(p.url))
+    .slice(0, NEAR_DUP_PAGE_CAP);
+  const out = new Set<string>();
+  for (let i = 0; i < eligible.length; i++) {
+    for (let j = i + 1; j < eligible.length; j++) {
+      if (hammingDistanceHex(eligible[i].simhash!, eligible[j].simhash!) <= NEAR_DUPLICATE_MAX_DISTANCE) {
+        out.add(eligible[i].url);
+        out.add(eligible[j].url);
+      }
+    }
+  }
+  return out;
 }
 
 function push(m: Map<string, string[]>, k: string, v: string): void {
