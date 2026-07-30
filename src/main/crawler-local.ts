@@ -17,11 +17,33 @@ const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 
 export const DEFAULT_USER_AGENT = 'Serpent/1.0 (SEO Crawler; +https://github.com/danishashko/serpent)';
 
-/** Request headers for a crawl: UA, custom headers, basic auth, cookies. */
+/**
+ * Basic-auth credentials belong to the host they were entered for. A same-host
+ * http→https upgrade keeps them; any other host (or an https→http downgrade)
+ * drops them, so a redirect off-site can't hand the password to a third party.
+ */
+export function isSameAuthScope(scopeUrl: string, targetUrl: string): boolean {
+  try {
+    const scope = new URL(scopeUrl);
+    const target = new URL(targetUrl);
+    if (scope.host !== target.host) return false;
+    if (scope.protocol === target.protocol) return true;
+    return scope.protocol === 'http:' && target.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Request headers for a crawl: UA, custom headers, basic auth, cookies.
+ * `authScopeUrl` is the URL the credentials were issued for (defaults to `url`);
+ * when following redirects, pass the originally requested URL.
+ */
 export function buildRequestHeaders(
   config: CrawlConfig,
   url: string,
-  cookieJar?: SimpleCookieJar
+  cookieJar?: SimpleCookieJar,
+  authScopeUrl?: string
 ): Record<string, string> {
   const headers: Record<string, string> = {
     'User-Agent': config.userAgent?.trim() || DEFAULT_USER_AGENT,
@@ -32,7 +54,7 @@ export function buildRequestHeaders(
     const name = h.name?.trim();
     if (name && h.value != null) headers[name] = h.value;
   }
-  if (config.authUser) {
+  if (config.authUser && isSameAuthScope(authScopeUrl ?? url, url)) {
     headers['Authorization'] =
       'Basic ' + Buffer.from(`${config.authUser}:${config.authPass ?? ''}`).toString('base64');
   }
@@ -93,12 +115,31 @@ export interface CrawlResult {
 // This is how the JS-render path learns security headers (HSTS/CSP/etc.) that
 // executeJavaScript cannot see.
 const renderedHeaders = new Map<number, Record<string, string>>();
+
+// Host scope of the Basic-auth credentials attached to each rendering window.
+const renderAuthScopes = new Map<number, string>();
 let headerHookInstalled = false;
 
 function installHeaderHook(): void {
   if (headerHookInstalled) return;
   headerHookInstalled = true;
   try {
+    // Chromium replays extraHeaders across redirects, so strip Basic auth once a
+    // rendered navigation leaves the host the credentials were entered for.
+    session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+      const scope = typeof details.webContentsId === 'number'
+        ? renderAuthScopes.get(details.webContentsId)
+        : undefined;
+      if (scope && !isSameAuthScope(scope, details.url)) {
+        const headers = { ...details.requestHeaders };
+        for (const name of Object.keys(headers)) {
+          if (name.toLowerCase() === 'authorization') delete headers[name];
+        }
+        callback({ requestHeaders: headers });
+        return;
+      }
+      callback({});
+    });
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       if (details.resourceType === 'mainFrame' && typeof details.webContentsId === 'number') {
         const flat: Record<string, string> = {};
@@ -142,6 +183,7 @@ async function fetchWithElectronRenderer(
 
   installHeaderHook();
   const wcId = win.webContents.id;
+  if (config.authUser) renderAuthScopes.set(wcId, url);
 
   try {
     // Phase 1: wait for the page to finish loading
@@ -229,6 +271,7 @@ async function fetchWithElectronRenderer(
     return { html: '', statusCode: 0, responseTimeMs: Date.now() - startTime, headers: null };
   } finally {
     renderedHeaders.delete(wcId);
+    renderAuthScopes.delete(wcId);
     if (!win.isDestroyed()) win.destroy();
   }
 }
@@ -278,7 +321,7 @@ export async function crawlPageLocal(
           maxRedirects: 0,
           maxContentLength: MAX_RESPONSE_BYTES,
           maxBodyLength: MAX_RESPONSE_BYTES,
-          headers: buildRequestHeaders(config, currentUrl, cookieJar),
+          headers: buildRequestHeaders(config, currentUrl, cookieJar, url),
           responseType: 'text',
           validateStatus: () => true, // Don't throw on 4xx/5xx
         });

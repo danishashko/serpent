@@ -30,6 +30,7 @@ import {
   getLatestIncompleteCrawl,
 } from './database';
 import { parseRobotsTxt, checkPath, type RobotsRuleSet } from './robots-tester';
+import { robotsTokenForUserAgent } from './robots-ua';
 import { compilePatterns, urlPassesFilters, stripQueryParams, startPathPrefix, isWithinStartPath, SimpleCookieJar } from './crawl-filters';
 
 // ─── Robots.txt enforcement (delegated to robots-tester.ts) ────────────────────
@@ -141,7 +142,11 @@ export class CrawlOrchestrator extends EventEmitter {
     const baseUrl = new URL(firstUrl);
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
-    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'Serpent';
+    // Explicit robots token wins; otherwise derive it from the request User-Agent
+    // so "crawl as Googlebot" obeys Googlebot's robots.txt group.
+    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim()
+      ? config.robotsUserAgent.trim()
+      : robotsTokenForUserAgent(config.userAgent);
     this.includeRe = compilePatterns(config.includePatterns);
     this.excludeRe = compilePatterns(config.excludePatterns);
     this.startPath = config.mode === 'spider' && config.restrictToStartPath ? startPathPrefix(firstUrl) : null;
@@ -289,7 +294,11 @@ export class CrawlOrchestrator extends EventEmitter {
     const baseUrl = new URL(firstUrl);
     this.baseOrigin = baseUrl.origin;
     this.robotsRules = null;
-    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim() ? config.robotsUserAgent.trim() : 'Serpent';
+    // Explicit robots token wins; otherwise derive it from the request User-Agent
+    // so "crawl as Googlebot" obeys Googlebot's robots.txt group.
+    this.robotsUserAgent = config.robotsUserAgent && config.robotsUserAgent.trim()
+      ? config.robotsUserAgent.trim()
+      : robotsTokenForUserAgent(config.userAgent);
     this.includeRe = compilePatterns(config.includePatterns);
     this.excludeRe = compilePatterns(config.excludePatterns);
     this.startPath = config.mode === 'spider' && config.restrictToStartPath ? startPathPrefix(firstUrl) : null;

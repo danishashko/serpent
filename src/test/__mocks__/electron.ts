@@ -36,6 +36,7 @@ export const shell = {
 export const session = {
   defaultSession: {
     webRequest: {
+      onBeforeSendHeaders: () => {},
       onHeadersReceived: () => {},
     },
   },

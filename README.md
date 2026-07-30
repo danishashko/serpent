@@ -57,10 +57,10 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - **Local crawl engine** (axios) with configurable concurrency, depth, URL limits, and **per-request rate limiting**
 - **Bright Data integration** to bypass bot protection on difficult sites
 - **JavaScript rendering** via Electron's built-in Chromium — no headless browser needed
-- **robots.txt** parsing and enforcement
+- **robots.txt** parsing and enforcement — the rule group follows the crawl User-Agent, so crawling as Googlebot obeys Googlebot's rules
 - **Scoping modes** — full domain, single subdomain, start-folder only, or an exact **URL list** (paste, clipboard, sitemap, or file — across multiple domains)
 - **Include / exclude URL patterns** (regex) and **URL parameter stripping** (`utm_*`, `fbclid`, …) to keep crawls focused and deduplicated
-- **Configurable User-Agent** (Googlebot, Bingbot, Chrome presets or custom), **custom HTTP headers**, **HTTP Basic auth**, and **session cookies** for authenticated crawls
+- **Configurable User-Agent** (Googlebot, Bingbot, Chrome presets or custom), **custom HTTP headers**, **HTTP Basic auth** (scoped to the host you entered it for — never forwarded across an off-host redirect), and **session cookies** for authenticated crawls
 - **Scheduled crawls** — recurring local crawls that run while the app is open
 - **Headless CLI mode** — `serpent --headless-crawl=<url> --output=pages.csv` crawls and exports without opening a window
 - **Pause / Resume / Stop** with persistent crawl state and cost continuity

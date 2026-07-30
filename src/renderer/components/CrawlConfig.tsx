@@ -3,6 +3,7 @@ import {
   CrawlConfig as CrawlConfigType,
   CrawlProgress,
 } from "../../types/index";
+import { robotsTokenForUserAgent } from "../../main/robots-ua";
 
 interface Props {
   progress: CrawlProgress | null;
@@ -607,7 +608,9 @@ export default function CrawlConfig({
       {config.respectRobots && (
         <CustomRobotsSection
           customRobotsTxt={config.customRobotsTxt ?? ""}
-          robotsUserAgent={config.robotsUserAgent ?? "Serpent"}
+          robotsUserAgent={
+            config.robotsUserAgent ?? robotsTokenForUserAgent(config.userAgent)
+          }
           startUrl={config.startUrl}
           busy={busy}
           onChangeBody={(v) =>
@@ -877,6 +880,9 @@ function AdvancedSection({
             onChange={(e) => {
               const v = e.target.value;
               setUaChoice(v);
+              // Clear any pinned robots token so it follows the new UA
+              // (see robotsTokenForUserAgent).
+              set("robotsUserAgent", undefined);
               if (v === "__custom__") {
                 set("userAgent", config.userAgent || "MyCrawler/1.0");
               } else {
