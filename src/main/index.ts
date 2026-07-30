@@ -7,6 +7,7 @@ import { analyzeGEOBatch } from './geo-analyzer';
 import { analyzePerformanceBatch } from './performance-analyzer';
 import { generatePdfReport } from './report-generator';
 import { CrawlOrchestrator } from './crawler-orchestrator';
+import { DEFAULT_USER_AGENT } from './crawler-local';
 import { testBrightDataConnection, testBrightDataBrowserConnection } from './crawler-brightdata';
 import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO, analyzeIssueGroup, testAIProviderConnection, AIProviderConfig } from './ai-analyzer';
 import { querySerpBatch, storeSerpResults, getSerpResults } from './serp-client';
@@ -1439,7 +1440,7 @@ ipcMain.handle(IPC.SITEMAP_FETCH_URLS, async (_event, sitemapUrl: string) => {
   try {
     const xml = await new Promise<string>((resolve, reject) => {
       const mod = sitemapUrl.startsWith('https') ? require('https') : require('http');
-      mod.get(sitemapUrl, { headers: { 'User-Agent': 'GhostFrog/1.0' } }, (res: import('http').IncomingMessage) => {
+      mod.get(sitemapUrl, { headers: { 'User-Agent': DEFAULT_USER_AGENT } }, (res: import('http').IncomingMessage) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
         res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
