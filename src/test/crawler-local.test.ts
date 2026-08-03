@@ -261,7 +261,7 @@ describe('crawlPageLocal', () => {
       expect(discoveredUrls).not.toContain(expect.stringContaining('other.com'));
     });
 
-    it('skips mailto:, tel:, and javascript: hrefs', async () => {
+    it('skips mailto: and tel: hrefs, and records javascript: as uncrawlable', async () => {
       const html = `<html><body>
         <a href="mailto:a@b.com">email</a>
         <a href="tel:+1234">call</a>
@@ -269,9 +269,17 @@ describe('crawlPageLocal', () => {
         <a href="https://example.com/real">real</a>
       </body></html>`;
       mockResponse(html);
-      const { links } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
-      expect(links).toHaveLength(1);
-      expect(links[0].targetUrl).toBe('https://example.com/real');
+      const { links, discoveredUrls } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      const crawlable = links.filter(l => l.crawlability !== 'uncrawlable');
+      expect(crawlable).toHaveLength(1);
+      expect(crawlable[0].targetUrl).toBe('https://example.com/real');
+
+      // mailto: and tel: are dropped entirely; javascript: is reported but never followed.
+      const uncrawlable = links.filter(l => l.crawlability === 'uncrawlable');
+      expect(uncrawlable).toHaveLength(1);
+      expect(uncrawlable[0].uncrawlableReason).toBe('javascript_href');
+      expect(discoveredUrls).toEqual(['https://example.com/real']);
     });
 
     it('strips URL fragments before storing', async () => {

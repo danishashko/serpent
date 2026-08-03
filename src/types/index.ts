@@ -121,7 +121,23 @@ export interface PageData {
   linkScore: number;
   // 64-bit simhash fingerprint of body text (16 hex chars) for near-duplicate detection
   simhash: string | null;
+  /** Count of internal outlinks on this page that are not crawlable per Google's guidance. */
+  uncrawlableOutlinks: number;
 }
+
+/** Whether a link follows Google's crawlable-link guidance. */
+export type LinkCrawlability = 'crawlable' | 'uncrawlable';
+
+export type UncrawlableReason =
+  | 'href_on_non_anchor'   // <div href="…">, <span href="…">
+  | 'javascript_href'      // <a href="javascript:goTo('x')">
+  | 'onclick_only';        // <a onclick="goto('x')"> with no usable href
+
+export const UNCRAWLABLE_REASON_LABELS: Record<UncrawlableReason, string> = {
+  href_on_non_anchor: 'href on a non-anchor element',
+  javascript_href: 'javascript: pseudo-URL in href',
+  onclick_only: 'onclick handler with no crawlable href',
+};
 
 export interface LinkData {
   id: string;
@@ -132,6 +148,10 @@ export interface LinkData {
   anchorText: string | null;
   relAttr: string | null;
   statusCode?: number | null;
+  /** Defaults to 'crawlable' when absent (rows written before this existed). */
+  crawlability?: LinkCrawlability;
+  /** Why the link is uncrawlable — null/absent for normal links. */
+  uncrawlableReason?: string | null;
 }
 
 export interface ImageData {

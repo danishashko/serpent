@@ -7,6 +7,7 @@ import { BrowserWindow, session } from 'electron';
 import { PageData, LinkData, ImageData, CrawlConfig } from '../types/index';
 import { SimpleCookieJar } from './crawl-filters';
 import { simhash64 } from './simhash';
+import { extractUncrawlableLinks } from './uncrawlable-links';
 
 // Approximate pixel widths per character (Arial 13px, common browser default)
 const AVG_CHAR_PX = 7.2;
@@ -368,6 +369,7 @@ export async function crawlPageLocal(
   const links: LinkData[] = [];
   const images: ImageData[] = [];
   const discoveredUrls: string[] = [];
+  let uncrawlableOutlinks = 0;
 
   // If the URL was redirected, record the redirect status code and skip content
   // parsing — the final destination's HTML belongs to a different URL.
@@ -529,11 +531,19 @@ export async function crawlPageLocal(
             isInternal,
             anchorText: $(el).text().trim() || null,
             relAttr: $(el).attr('rel') || null,
+            crawlability: 'crawlable',
+            uncrawlableReason: null,
           });
         } catch {
           // Invalid URL — skip
         }
       });
+
+      // Links that exist in the HTML but don't follow Google's crawlable-link
+      // guidance. Reported only — never added to discoveredUrls.
+      const uncrawlable = extractUncrawlableLinks($, crawlId, url, baseOrigin);
+      links.push(...uncrawlable);
+      uncrawlableOutlinks = uncrawlable.filter(l => l.isInternal).length;
     }
 
     // Images
@@ -709,6 +719,7 @@ export async function crawlPageLocal(
     imageCount: images.length,
     linkScore: 0,
     simhash,
+    uncrawlableOutlinks,
   };
 
   return { page, links, images, discoveredUrls, redirectChain, hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults };

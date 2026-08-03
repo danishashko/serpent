@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore } from '../../types/index';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore, UncrawlableReason, UNCRAWLABLE_REASON_LABELS } from '../../types/index';
 import CrawlComparison from './CrawlComparison';
 import SiteMap from './SiteMap';
 import ExportModal from './ExportModal';
@@ -478,6 +478,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         rows: filtered.map(l => ({
           source_url: l.sourceUrl, target_url: l.targetUrl, anchor_text: l.anchorText ?? '',
           type: l.isInternal ? 'internal' : 'external', rel: l.relAttr ?? '',
+          crawlability: l.crawlability ?? 'crawlable', uncrawlable_reason: l.uncrawlableReason ?? '',
         })),
         filename: `${prefix}-links.${ext}`,
       };
@@ -1010,13 +1011,14 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <th>Destination URL</th>
                 <th>Anchor Text</th>
                 <th>Type</th>
+                <th>Crawlability</th>
                 <th>Nofollow</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
               {links.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No links collected yet</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No links collected yet</td></tr>
               ) : (() => {
                 const filteredLinks = links.filter(l => !search || l.sourceUrl.toLowerCase().includes(search.toLowerCase()) || l.targetUrl.toLowerCase().includes(search.toLowerCase()));
                 const capped = filteredLinks.slice(0, MAX_RENDER_ROWS);
@@ -1039,6 +1041,22 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                     }}>
                       {!l.isInternal ? 'External' : 'Internal'}
                     </span>
+                  </td>
+                  <td style={{ fontSize: 11 }}>
+                    {l.crawlability === 'uncrawlable' ? (
+                      <span
+                        title={UNCRAWLABLE_REASON_LABELS[l.uncrawlableReason as UncrawlableReason] ?? l.uncrawlableReason ?? ''}
+                        style={{
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: 'rgba(255,140,50,0.15)',
+                          color: 'var(--accent-orange)',
+                          fontWeight: 600,
+                        }}
+                      >Uncrawlable</span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)' }}>Crawlable</span>
+                    )}
                   </td>
                   <td style={{ color: l.relAttr?.includes('nofollow') ? 'var(--accent-orange)' : 'var(--text-muted)', fontSize: 11 }}>
                     {l.relAttr?.includes('nofollow') ? 'nofollow' : ''}

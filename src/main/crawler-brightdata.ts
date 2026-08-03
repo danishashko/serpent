@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CrawlConfig, PageData, LinkData, ImageData } from '../types/index';
 import { CrawlResult } from './crawler-local';
 import { simhash64 } from './simhash';
+import { extractUncrawlableLinks } from './uncrawlable-links';
 
 function normalizeUrlForComparison(url: string): string {
   try {
@@ -223,6 +224,7 @@ function buildResultFromHtml(
   const links: LinkData[] = [];
   const images: ImageData[] = [];
   const discoveredUrls: string[] = [];
+  let uncrawlableOutlinks = 0;
 
   let title: string | null = null;
   let titleLength: number | null = null;
@@ -331,11 +333,18 @@ function buildResultFromHtml(
             isInternal,
             anchorText: $(el).text().trim() || null,
             relAttr: $(el).attr('rel') || null,
+            crawlability: 'crawlable',
+            uncrawlableReason: null,
           });
         } catch {
           // skip
         }
       });
+
+      // Reported only — never added to discoveredUrls.
+      const uncrawlable = extractUncrawlableLinks($, crawlId, url, baseOrigin);
+      links.push(...uncrawlable);
+      uncrawlableOutlinks = uncrawlable.filter(l => l.isInternal).length;
     }
 
     if (config.extractImages) {
@@ -513,6 +522,7 @@ function buildResultFromHtml(
     imageCount: images.length,
     linkScore: 0,
     simhash,
+    uncrawlableOutlinks,
   };
 
   return { page, links, images, discoveredUrls, redirectChain: [], hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults, bytesDownloaded: pageSizeBytes };

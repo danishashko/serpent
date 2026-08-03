@@ -276,6 +276,11 @@ function createTables(): void {
   // Simhash fingerprint for near-duplicate detection — migration for existing DBs
   try { db.exec('ALTER TABLE pages ADD COLUMN simhash TEXT'); } catch { /* already exists */ }
 
+  // Link crawlability (Google crawlable-link guidance) — migration for existing DBs
+  try { db.exec("ALTER TABLE links ADD COLUMN crawlability TEXT NOT NULL DEFAULT 'crawlable'"); } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE links ADD COLUMN uncrawlable_reason TEXT'); } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE pages ADD COLUMN uncrawlable_outlinks INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+
   // PageSpeed Insights / CWV scores
   db.exec(`
     CREATE TABLE IF NOT EXISTS psi_scores (
@@ -393,7 +398,8 @@ export function insertPage(page: PageData): void {
       og_title, og_description, og_image, og_type,
       twitter_card, twitter_title, twitter_description, twitter_image,
       schema_types, schema_json, schema_errors, has_structured_data,
-      has_hsts, has_csp, x_frame_options, x_content_type_options, image_count, link_score, simhash
+      has_hsts, has_csp, x_frame_options, x_content_type_options, image_count, link_score, simhash,
+      uncrawlable_outlinks
     ) VALUES (
       @id, @crawlId, @url, @statusCode, @contentType,
       @title, @titleLength, @titlePixelWidth,
@@ -404,7 +410,8 @@ export function insertPage(page: PageData): void {
       @ogTitle, @ogDescription, @ogImage, @ogType,
       @twitterCard, @twitterTitle, @twitterDescription, @twitterImage,
       @schemaTypes, @schemaJson, @schemaErrors, @hasStructuredData,
-      @hasHSTS, @hasCSP, @xFrameOptions, @xContentTypeOptions, @imageCount, @linkScore, @simhash
+      @hasHSTS, @hasCSP, @xFrameOptions, @xContentTypeOptions, @imageCount, @linkScore, @simhash,
+      @uncrawlableOutlinks
     )
   `).run({
     id: page.id,
@@ -456,6 +463,7 @@ export function insertPage(page: PageData): void {
     imageCount: page.imageCount,
     linkScore: page.linkScore,
     simhash: page.simhash,
+    uncrawlableOutlinks: page.uncrawlableOutlinks ?? 0,
   });
 }
 
@@ -479,7 +487,7 @@ export function getUncrawledLinkTargets(crawlId: string): { url: string; depth: 
     SELECT l.target_url as url, COALESCE(MIN(p.crawl_depth), 0) + 1 as depth
     FROM links l
     JOIN pages p ON p.crawl_id = l.crawl_id AND p.url = l.source_url
-    WHERE l.crawl_id = ? AND l.is_internal = 1
+    WHERE l.crawl_id = ? AND l.is_internal = 1 AND l.crawlability = 'crawlable'
       AND l.target_url NOT IN (SELECT url FROM pages WHERE crawl_id = ?)
     GROUP BY l.target_url
   `).all(crawlId, crawlId) as { url: string; depth: number }[];
@@ -509,7 +517,8 @@ export function getPagesByCrawl(crawlId: string): PageData[] {
       schema_errors as schemaErrors, has_structured_data as hasStructuredData,
       has_hsts as hasHSTS, has_csp as hasCSP,
       x_frame_options as xFrameOptions, x_content_type_options as xContentTypeOptions,
-      image_count as imageCount, link_score as linkScore, simhash
+      image_count as imageCount, link_score as linkScore, simhash,
+      uncrawlable_outlinks as uncrawlableOutlinks
     FROM pages WHERE crawl_id = ? ORDER BY created_at ASC
   `).all(crawlId) as PageData[];
 }
@@ -523,8 +532,8 @@ export function getPageCount(crawlId: string): number {
 
 export function insertLinks(links: LinkData[]): void {
   const stmt = db.prepare(`
-    INSERT OR IGNORE INTO links (id, crawl_id, source_url, target_url, is_internal, anchor_text, rel_attr)
-    VALUES (@id, @crawlId, @sourceUrl, @targetUrl, @isInternal, @anchorText, @relAttr)
+    INSERT OR IGNORE INTO links (id, crawl_id, source_url, target_url, is_internal, anchor_text, rel_attr, crawlability, uncrawlable_reason)
+    VALUES (@id, @crawlId, @sourceUrl, @targetUrl, @isInternal, @anchorText, @relAttr, @crawlability, @uncrawlableReason)
   `);
   const insertMany = db.transaction((rows: LinkData[]) => {
     for (const row of rows) {
@@ -536,6 +545,8 @@ export function insertLinks(links: LinkData[]): void {
         isInternal: row.isInternal ? 1 : 0,
         anchorText: row.anchorText,
         relAttr: row.relAttr,
+        crawlability: row.crawlability ?? 'crawlable',
+        uncrawlableReason: row.uncrawlableReason ?? null,
       });
     }
   });
@@ -549,7 +560,8 @@ export function getLinksByCrawl(crawlId: string): LinkData[] {
   return db.prepare(`
     SELECT l.id, l.crawl_id as crawlId, l.source_url as sourceUrl, l.target_url as targetUrl,
       l.is_internal as isInternal, l.anchor_text as anchorText, l.rel_attr as relAttr,
-      COALESCE(l.status_code, p.status_code) as statusCode
+      COALESCE(l.status_code, p.status_code) as statusCode,
+      l.crawlability, l.uncrawlable_reason as uncrawlableReason
     FROM links l
     LEFT JOIN pages p ON p.crawl_id = l.crawl_id AND p.url = l.target_url
     WHERE l.crawl_id = ?
@@ -772,8 +784,10 @@ export function calculateLinkScores(crawlId: string): void {
 
   const pageUrls = new Set(pages.map(p => p.url));
 
+  // Uncrawlable links are excluded: they are not guaranteed to be followed or
+  // to pass link signals, so counting them would inflate the target's equity.
   const links = db.prepare(
-    'SELECT source_url, target_url FROM links WHERE crawl_id = ? AND is_internal = 1'
+    "SELECT source_url, target_url FROM links WHERE crawl_id = ? AND is_internal = 1 AND crawlability = 'crawlable'"
   ).all(crawlId) as { source_url: string; target_url: string }[];
 
   const outlinks = new Map<string, string[]>();

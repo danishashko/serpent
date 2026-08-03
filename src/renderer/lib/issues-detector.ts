@@ -31,6 +31,9 @@ export const META_MAX_PIXELS = 985;
 export const H1_MAX_LEN = 70;
 export const URL_MAX_LEN = 115;
 export const LOW_WORD_COUNT = 200;
+// Googlebot reads only the first 2 MB of an HTML document and drops the rest.
+// (Google previously documented 15 MB; the figure was corrected to 2 MB.)
+export const HTML_MAX_BYTES = 2 * 1024 * 1024;
 
 interface Detector extends IssueDefinition {
   detect: (p: PageData, ctx: DetectContext) => boolean;
@@ -163,6 +166,9 @@ export const DETECTORS: Detector[] = [
   d('near_duplicate_content', 'content', 'warning', 'Near-Duplicate Content (~90%+ similar)',
     `Content body is highly similar to another indexable URL (simhash distance ≤ ${NEAR_DUPLICATE_MAX_DISTANCE} of 64 bits).`,
     (p, ctx) => p.statusCode === 200 && ctx.nearDuplicateUrls.has(p.url)),
+  d('html_over_2mb', 'content', 'warning', 'HTML Document Over 2MB',
+    'Googlebot only reads the first 2MB of an HTML document — anything past that is never indexed.',
+    (p) => p.statusCode === 200 && (p.pageSizeBytes ?? 0) > HTML_MAX_BYTES),
 
   // ── Security
   d('missing_hsts', 'security', 'warning', 'Missing HSTS Header',
@@ -198,6 +204,9 @@ export const DETECTORS: Detector[] = [
   d('low_link_score', 'links', 'info', 'Low Internal Link Score',
     'Page receives few internal inlinks (linkScore < 10).',
     (p) => p.statusCode === 200 && p.isIndexable && (p.linkScore ?? 0) < 10),
+  d('uncrawlable_outlinks', 'links', 'warning', 'Pages With Uncrawlable Internal Outlinks',
+    'Page links internally with markup search engines cannot reliably follow — an href on a non-anchor element, a javascript: href, or an onclick handler with no href.',
+    (p) => (p.uncrawlableOutlinks ?? 0) > 0),
   d('high_image_count', 'images', 'info', 'High Image Count (>50)',
     'Page contains an unusually high number of images — review weight & alt text.',
     (p) => p.statusCode === 200 && (p.imageCount ?? 0) > 50),
