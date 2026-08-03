@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-windows:
@@ -63,12 +65,66 @@ jobs:
       #     wait-for-completion: true
       #     output-artifact-directory: release/signed
 
+      # Checksums and provenance run last so they cover the final binary.
+      # If SignPath is enabled above, point both at release/signed instead.
+      - name: Generate checksums and verification notes
+        shell: pwsh
+        env:
+          IS_PUBLIC: ${{ github.event.repository.private == false }}
+        run: |
+          $installer = Get-ChildItem release -Filter *.exe -File | Select-Object -First 1
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($installer.Name)" | Set-Content release/SHA256SUMS.txt -Encoding ascii
+
+          $notes = @(
+            '## Verify this download'
+            ''
+            'This installer is built by GitHub Actions directly from the tagged source in this repo. No local machine touches it.'
+            ''
+            '**SHA256**'
+            ''
+            '```'
+            "$hash  $($installer.Name)"
+            '```'
+            ''
+            '```powershell'
+            "Get-FileHash '.\$($installer.Name)' -Algorithm SHA256"
+            '```'
+            ''
+          )
+
+          # Attestations only exist once the repo is public (see the attest step below).
+          if ($env:IS_PUBLIC -eq 'true') {
+            $notes += @(
+              '**Build provenance**: confirm the binary was built from this repo and commit ([GitHub CLI](https://cli.github.com/) required).'
+              ''
+              '```'
+              "gh attestation verify '.\$($installer.Name)' --repo ${{ github.repository }}"
+              '```'
+              ''
+            )
+          }
+
+          $notes += 'Releases are not code-signed yet, so Windows SmartScreen may warn on first run: **More info -> Run anyway**.'
+          $notes += ''
+          $notes | Set-Content release/RELEASE_NOTES.md -Encoding utf8
+
+      # Artifact attestations need a public repo on Free/Pro/Team plans, so this
+      # is skipped while serpent is private and turns itself on at the OSS flip.
+      - name: Attest build provenance
+        if: github.event.repository.private == false
+        uses: actions/attest@v4
+        with:
+          subject-path: release/*.exe
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release/*.exe
             release/latest.yml
+            release/SHA256SUMS.txt
+          body_path: release/RELEASE_NOTES.md
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
