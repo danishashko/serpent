@@ -129,7 +129,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Scheduled crawls
   scheduleList: () => ipcRenderer.invoke(IPC.SCHEDULE_LIST),
-  scheduleAdd: (payload: { name: string; startUrl: string; intervalHours: number; config?: Partial<CrawlConfig> }) =>
+  scheduleAdd: (payload: { name: string; startUrl: string; intervalHours: number; autoCompare?: boolean; config?: Partial<CrawlConfig> }) =>
     ipcRenderer.invoke(IPC.SCHEDULE_ADD, payload),
   scheduleDelete: (id: string) => ipcRenderer.invoke(IPC.SCHEDULE_DELETE, id),
   scheduleToggle: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.SCHEDULE_TOGGLE, id, enabled),

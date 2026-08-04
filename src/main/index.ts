@@ -16,9 +16,9 @@ import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, 
 import { generateSitemap as buildSitemap } from './sitemap-generator';
 import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
-import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress, PsiStrategy } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress, PsiStrategy, ScheduleDiffSummary } from '../types/index';
 import { v4 as uuidv4 } from 'uuid';
-import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules, upsertPsiScoresBatch, getPsiScoresByCrawl, purgeCrawlsOlderThan, deleteCrawl, setCrawlLocked } from './database';
+import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules, upsertPsiScoresBatch, getPsiScoresByCrawl, purgeCrawlsOlderThan, deleteCrawl, setCrawlLocked, getCrawlById, getSchedule, setCrawlSchedule, getPreviousScheduleCrawl, setScheduleLastDiff } from './database';
 import { analyzePsiBatch, PSI_MAX_URLS_KEYLESS } from './psi-client';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
@@ -268,6 +268,8 @@ orchestrator.on('complete', (crawlId: string) => {
   calculateLinkScores(crawlId);
   mainWindow?.webContents.send(IPC.CRAWL_COMPLETE, crawlId);
 
+  runAutoCompare(crawlId);
+
   // Check external link statuses in the background (non-blocking)
   checkExternalLinkStatuses(crawlId)
     .then(statusMap => {
@@ -415,6 +417,43 @@ ipcMain.handle(IPC.CRAWL_SET_LOCKED, (_event, payload: { crawlId: string; locked
 
 // ─── Scheduled crawls ──────────────────────────────────────────────────────────
 
+/**
+ * After a scheduled crawl finishes, diff it against the previous run of the same
+ * schedule and stash the summary on the schedule row. No-op for manual crawls,
+ * for schedules without auto-compare, and for the first run (nothing to diff).
+ */
+function runAutoCompare(crawlId: string): void {
+  try {
+    const crawl = getCrawlById(crawlId);
+    if (!crawl?.scheduleId) return;
+    const schedule = getSchedule(crawl.scheduleId);
+    if (!schedule?.autoCompare) return;
+
+    const previous = getPreviousScheduleCrawl(schedule.id, crawlId);
+    if (!previous) {
+      console.log(`[AUTO-COMPARE] "${schedule.name}": first run, nothing to compare against`);
+      return;
+    }
+
+    const diffs = compareCrawls(previous.id, crawlId);
+    const summary: ScheduleDiffSummary = {
+      scheduleId: schedule.id,
+      scheduleName: schedule.name,
+      previousCrawlId: previous.id,
+      currentCrawlId: crawlId,
+      added: diffs.filter(d => d.status === 'added').length,
+      removed: diffs.filter(d => d.status === 'removed').length,
+      changed: diffs.filter(d => d.status === 'changed').length,
+      comparedAt: new Date().toISOString(),
+    };
+    setScheduleLastDiff(schedule.id, JSON.stringify(summary));
+    console.log(`[AUTO-COMPARE] "${schedule.name}": +${summary.added} -${summary.removed} ~${summary.changed}`);
+    mainWindow?.webContents.send('schedule:compared', summary);
+  } catch (err) {
+    console.error('[AUTO-COMPARE]', err);
+  }
+}
+
 function checkSchedules(): void {
   try {
     const status = orchestrator.getStatus();
@@ -429,6 +468,8 @@ function checkSchedules(): void {
     markScheduleRun(s.id, now.toISOString(), next.toISOString());
     orchestrator.startCrawl(config)
       .then(crawlId => {
+        // Tag the crawl so auto-compare can find the previous run of this schedule.
+        setCrawlSchedule(crawlId, s.id);
         console.log(`[SCHEDULER] started scheduled crawl "${s.name}" → ${crawlId}`);
         mainWindow?.webContents.send('schedule:triggered', { scheduleId: s.id, name: s.name, crawlId });
       })
@@ -440,7 +481,7 @@ function checkSchedules(): void {
 
 ipcMain.handle(IPC.SCHEDULE_LIST, () => listSchedules());
 
-ipcMain.handle(IPC.SCHEDULE_ADD, (_event, payload: { name: string; startUrl: string; intervalHours: number; config?: Partial<CrawlConfig> }) => {
+ipcMain.handle(IPC.SCHEDULE_ADD, (_event, payload: { name: string; startUrl: string; intervalHours: number; autoCompare?: boolean; config?: Partial<CrawlConfig> }) => {
   try {
     const { name, startUrl, intervalHours } = payload;
     try {
@@ -483,6 +524,8 @@ ipcMain.handle(IPC.SCHEDULE_ADD, (_event, payload: { name: string; startUrl: str
       nextRun: new Date(now.getTime() + intervalHours * 3_600_000).toISOString(),
       configJson: JSON.stringify(config),
       createdAt: now.toISOString(),
+      autoCompare: !!payload.autoCompare,
+      lastDiffJson: null,
     };
     insertSchedule(schedule);
     return { success: true, schedule };

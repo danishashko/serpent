@@ -211,6 +211,8 @@ export interface CrawlRecord {
   totalSpendUsd: number;
   /** Locked crawls are exempt from the retention policy. */
   locked: boolean;
+  /** Set when the crawl was started by a schedule. */
+  scheduleId?: string | null;
 }
 
 export interface CrawlProgress {
@@ -599,6 +601,22 @@ export interface CrawlSchedule {
   nextRun: string;
   configJson: string;
   createdAt: string;
+  /** Diff each run against the previous crawl from this schedule. */
+  autoCompare: boolean;
+  /** Serialised ScheduleDiffSummary from the last auto-compare, if any. */
+  lastDiffJson: string | null;
+}
+
+/** Result of an auto-compare after a scheduled crawl finishes. */
+export interface ScheduleDiffSummary {
+  scheduleId: string;
+  scheduleName: string;
+  previousCrawlId: string;
+  currentCrawlId: string;
+  added: number;
+  removed: number;
+  changed: number;
+  comparedAt: string;
 }
 
 // ─── Robots.txt tester ─────────────────────────────────────────────────────────

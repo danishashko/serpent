@@ -84,7 +84,7 @@ declare global {
       discoverGetGaps: (crawlId: string) => Promise<ContentGap[]>;
       testRobots: (req: RobotsTestRequest) => Promise<RobotsTestResult>;
       scheduleList: () => Promise<CrawlSchedule[]>;
-      scheduleAdd: (payload: { name: string; startUrl: string; intervalHours: number; config?: Record<string, unknown> }) => Promise<{ success: boolean; schedule?: CrawlSchedule; error?: string }>;
+      scheduleAdd: (payload: { name: string; startUrl: string; intervalHours: number; autoCompare?: boolean; config?: Record<string, unknown> }) => Promise<{ success: boolean; schedule?: CrawlSchedule; error?: string }>;
       scheduleDelete: (id: string) => Promise<{ success: boolean }>;
       scheduleToggle: (id: string, enabled: boolean) => Promise<{ success: boolean }>;
       onScheduleTriggered: (cb: (data: { scheduleId: string; name: string; crawlId: string }) => void) => void;

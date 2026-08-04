@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppSettings, AIProvider, CrawlSchedule, CrawlRecord } from '../../types/index';
+import { AppSettings, AIProvider, CrawlSchedule, CrawlRecord, ScheduleDiffSummary } from '../../types/index';
 
 interface Props {
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
@@ -465,6 +465,7 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [intervalHours, setIntervalHours] = useState(24);
+  const [autoCompare, setAutoCompare] = useState(false);
   const [adding, setAdding] = useState(false);
 
   const refresh = async () => {
@@ -479,10 +480,10 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
     if (!url.trim()) { showToast('Enter a URL to schedule', 'error'); return; }
     setAdding(true);
     try {
-      const result = await window.api.scheduleAdd({ name: name.trim(), startUrl: url.trim(), intervalHours });
+      const result = await window.api.scheduleAdd({ name: name.trim(), startUrl: url.trim(), intervalHours, autoCompare });
       if (result.success) {
         showToast('Schedule added', 'success');
-        setName(''); setUrl('');
+        setName(''); setUrl(''); setAutoCompare(false);
         await refresh();
       } else {
         showToast(result.error ?? 'Failed to add schedule', 'error');
@@ -494,6 +495,16 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
 
   const fmtInterval = (h: number) => h >= 1 ? `${h % 1 === 0 ? h : h.toFixed(2)} h` : `${Math.round(h * 60)} min`;
   const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleString() : '—';
+
+  const fmtDiff = (json: string | null): string | null => {
+    if (!json) return null;
+    try {
+      const d = JSON.parse(json) as ScheduleDiffSummary;
+      return `${d.added} new · ${d.removed} removed · ${d.changed} changed`;
+    } catch {
+      return null;
+    }
+  };
 
   return (
     <section data-testid="schedules-section" style={{ marginBottom: 28 }}>
@@ -519,10 +530,23 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
                 />
               </label>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</div>
+                <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {s.name}
+                  {s.autoCompare && (
+                    <span
+                      title="Each run is diffed against the previous crawl from this schedule"
+                      style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', borderRadius: 4, background: 'rgba(76,133,255,0.15)', color: 'var(--accent-blue)', fontWeight: 600 }}
+                    >AUTO-COMPARE</span>
+                  )}
+                </div>
                 <div style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {s.startUrl} · every {fmtInterval(s.intervalHours)} · next: {fmtTime(s.nextRun)}
                 </div>
+                {fmtDiff(s.lastDiffJson) && (
+                  <div data-testid="schedule-diff" style={{ color: 'var(--accent-blue)', fontSize: 10, marginTop: 2 }}>
+                    Last change: {fmtDiff(s.lastDiffJson)}
+                  </div>
+                )}
               </div>
               <button
                 className="btn-ghost"
@@ -564,6 +588,15 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
             onChange={e => setIntervalHours(Number(e.target.value))}
           />
         </div>
+        <label className="check-row" style={{ fontSize: 11, margin: 0 }}>
+          <input
+            type="checkbox"
+            data-testid="schedule-auto-compare"
+            checked={autoCompare}
+            onChange={e => setAutoCompare(e.target.checked)}
+          />
+          Auto-compare each run against the previous crawl
+        </label>
         <button
           className="btn-ghost"
           data-testid="schedule-add"

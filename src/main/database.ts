@@ -279,6 +279,10 @@ function createTables(): void {
   // Crawl retention lock — migration for existing DBs
   try { db.exec('ALTER TABLE crawls ADD COLUMN locked INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
 
+  // Auto-compare for scheduled crawls — migration for existing DBs.
+  // The `schedules` half runs after that table is created, further down.
+  try { db.exec('ALTER TABLE crawls ADD COLUMN schedule_id TEXT'); } catch { /* already exists */ }
+
   // Link crawlability (Google crawlable-link guidance) — migration for existing DBs
   try { db.exec("ALTER TABLE links ADD COLUMN crawlability TEXT NOT NULL DEFAULT 'crawlable'"); } catch { /* already exists */ }
   try { db.exec('ALTER TABLE links ADD COLUMN uncrawlable_reason TEXT'); } catch { /* already exists */ }
@@ -321,6 +325,11 @@ function createTables(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Schedule columns — must come after the CREATE above, or the ALTER silently
+  // fails on a fresh database and the column is never added.
+  try { db.exec('ALTER TABLE schedules ADD COLUMN auto_compare INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE schedules ADD COLUMN last_diff_json TEXT'); } catch { /* already exists */ }
 }
 
 // ----- Crawl operations -----
@@ -361,7 +370,8 @@ export function updateCrawlStatus(
 const CRAWL_SELECT = `
   SELECT id, mode, start_url as startUrl, start_time as startTime, end_time as endTime,
     status, config_json as configJson, total_urls as totalUrls,
-    completed_urls as completedUrls, total_spend_usd as totalSpendUsd, locked
+    completed_urls as completedUrls, total_spend_usd as totalSpendUsd, locked,
+    schedule_id as scheduleId
   FROM crawls`;
 
 function toCrawlRecord(row: Record<string, unknown>): CrawlRecord {
@@ -371,6 +381,11 @@ function toCrawlRecord(row: Record<string, unknown>): CrawlRecord {
 export function getAllCrawls(): CrawlRecord[] {
   const rows = db.prepare(CRAWL_SELECT + ' ORDER BY start_time DESC').all() as Record<string, unknown>[];
   return rows.map(toCrawlRecord);
+}
+
+export function getCrawlById(id: string): CrawlRecord | undefined {
+  const row = db.prepare(CRAWL_SELECT + ' WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  return row ? toCrawlRecord(row) : undefined;
 }
 
 // ----- Crawl retention -----
@@ -1179,11 +1194,42 @@ export function getPsiScoresByCrawl(crawlId: string): PsiScore[] {
 const SCHEDULE_SELECT = `
   SELECT id, name, start_url as startUrl, interval_hours as intervalHours,
     enabled, last_run as lastRun, next_run as nextRun,
-    config_json as configJson, created_at as createdAt
+    config_json as configJson, created_at as createdAt,
+    auto_compare as autoCompare, last_diff_json as lastDiffJson
   FROM schedules`;
 
 function toSchedule(row: Record<string, unknown>): CrawlSchedule {
-  return { ...(row as unknown as CrawlSchedule), enabled: !!row.enabled };
+  return {
+    ...(row as unknown as CrawlSchedule),
+    enabled: !!row.enabled,
+    autoCompare: !!row.autoCompare,
+  };
+}
+
+export function getSchedule(id: string): CrawlSchedule | undefined {
+  const row = db.prepare(SCHEDULE_SELECT + ' WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  return row ? toSchedule(row) : undefined;
+}
+
+/** Tag a crawl as belonging to a schedule, so later runs can be diffed against it. */
+export function setCrawlSchedule(crawlId: string, scheduleId: string): void {
+  db.prepare('UPDATE crawls SET schedule_id = ? WHERE id = ?').run(scheduleId, crawlId);
+}
+
+/**
+ * The most recent completed crawl from the same schedule, excluding the one
+ * that just finished. This is the baseline an auto-compare diffs against.
+ */
+export function getPreviousScheduleCrawl(scheduleId: string, excludeCrawlId: string): CrawlRecord | undefined {
+  const row = db.prepare(
+    CRAWL_SELECT + ` WHERE schedule_id = ? AND id != ? AND status = 'completed'
+      ORDER BY start_time DESC LIMIT 1`
+  ).get(scheduleId, excludeCrawlId) as Record<string, unknown> | undefined;
+  return row ? toCrawlRecord(row) : undefined;
+}
+
+export function setScheduleLastDiff(id: string, lastDiffJson: string | null): void {
+  db.prepare('UPDATE schedules SET last_diff_json = ? WHERE id = ?').run(lastDiffJson, id);
 }
 
 export function listSchedules(): CrawlSchedule[] {
@@ -1193,9 +1239,9 @@ export function listSchedules(): CrawlSchedule[] {
 
 export function insertSchedule(s: CrawlSchedule): void {
   db.prepare(`
-    INSERT INTO schedules (id, name, start_url, interval_hours, enabled, last_run, next_run, config_json, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(s.id, s.name, s.startUrl, s.intervalHours, s.enabled ? 1 : 0, s.lastRun, s.nextRun, s.configJson, s.createdAt);
+    INSERT INTO schedules (id, name, start_url, interval_hours, enabled, last_run, next_run, config_json, created_at, auto_compare)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(s.id, s.name, s.startUrl, s.intervalHours, s.enabled ? 1 : 0, s.lastRun, s.nextRun, s.configJson, s.createdAt, s.autoCompare ? 1 : 0);
 }
 
 export function deleteSchedule(id: string): void {
