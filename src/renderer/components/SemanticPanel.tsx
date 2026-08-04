@@ -30,8 +30,10 @@ export default function SemanticPanel({ crawlId, showToast }: Props): React.Reac
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [analysis, setAnalysis] = useState<SemanticAnalysis | null>(null);
   const [view, setView] = useState<View>('similar');
-  const [threshold, setThreshold] = useState(0.95);
-  const [relevanceThreshold, setRelevanceThreshold] = useState(0.7);
+  const [threshold, setThreshold] = useState(0.92);
+  // Starts null so the first analysis can hand back a floor derived from this
+  // crawl's own spread; a fixed default flags nothing on a tightly focused site.
+  const [relevanceThreshold, setRelevanceThreshold] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SemanticNeighbourRow[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -63,9 +65,11 @@ export default function SemanticPanel({ crawlId, showToast }: Props): React.Reac
     const result = await window.api.semanticAnalyze({
       crawlId,
       similarityThreshold: t,
-      relevanceThreshold: r,
+      // Omitted on the first pass so main derives it from the distribution.
+      relevanceThreshold: r ?? undefined,
     });
     setAnalysis(result);
+    if (r === null) setRelevanceThreshold(result.relevanceThreshold);
   }, [crawlId, threshold, relevanceThreshold]);
 
   useEffect(() => {
@@ -121,7 +125,7 @@ export default function SemanticPanel({ crawlId, showToast }: Props): React.Reac
 
   const lowRelevance = useMemo(
     () => (analysis?.results ?? [])
-      .filter(r => r.relevanceScore < (analysis?.relevanceThreshold ?? 0.7))
+      .filter(r => r.relevanceScore < (analysis?.relevanceThreshold ?? 0))
       .sort((a, b) => a.relevanceScore - b.relevanceScore),
     [analysis],
   );
@@ -242,6 +246,10 @@ export default function SemanticPanel({ crawlId, showToast }: Props): React.Reac
                   }}
                   style={{ width: 200, marginLeft: 10, verticalAlign: 'middle' }}
                 />
+                <span data-testid="similarity-stats" style={{ marginLeft: 10 }}>
+                  this crawl ranges {pct(analysis.similarityStats.min)}–{pct(analysis.similarityStats.max)},
+                  average {pct(analysis.similarityStats.mean)}
+                </span>
               </label>
               <SimilarTable rows={similarPages} pct={pct} />
             </>
@@ -250,14 +258,14 @@ export default function SemanticPanel({ crawlId, showToast }: Props): React.Reac
           {view === 'relevance' && (
             <>
               <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 8 }}>
-                Relevance floor: <b>{relevanceThreshold.toFixed(2)}</b>
+                Relevance floor: <b>{(relevanceThreshold ?? analysis.relevanceThreshold).toFixed(2)}</b>
                 <input
                   type="range"
                   data-testid="relevance-threshold"
                   min={0.1}
                   max={0.95}
                   step={0.01}
-                  value={relevanceThreshold}
+                  value={relevanceThreshold ?? analysis.relevanceThreshold}
                   onChange={e => {
                     const r = Number(e.target.value);
                     setRelevanceThreshold(r);
@@ -265,6 +273,11 @@ export default function SemanticPanel({ crawlId, showToast }: Props): React.Reac
                   }}
                   style={{ width: 200, marginLeft: 10, verticalAlign: 'middle' }}
                 />
+                <span data-testid="relevance-stats" style={{ marginLeft: 10 }}>
+                  this crawl ranges {pct(analysis.relevanceStats.min)}–{pct(analysis.relevanceStats.max)},
+                  average {pct(analysis.relevanceStats.mean)} — the floor defaults to one standard
+                  deviation below average, since “off-topic” only means anything relative to this site
+                </span>
               </label>
               <table className="data-table">
                 <thead><tr><th>URL</th><th>Relevance to site</th></tr></thead>

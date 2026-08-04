@@ -18,11 +18,52 @@ export const EMBEDDING_DIMENSIONS = 768;
 /** Embedding models cap out well before this; more text is wasted tokens. */
 export const MAX_EMBED_CHARS = 8000;
 
-/** Pages at or above this cosine similarity are reported as semantically similar. */
-export const DEFAULT_SIMILARITY_THRESHOLD = 0.95;
+/**
+ * Pages at or above this cosine similarity are reported as semantically similar.
+ *
+ * Screaming Frog uses 0.95, but that number belongs to their embedding model.
+ * Measured against Gemini 768-dim on a real 39-page site, closest-match scores
+ * ran 0.74–0.98 with a mean of 0.88, so 0.95 surfaced almost nothing. 0.92 sits
+ * roughly a standard deviation above that mean, which is where genuinely
+ * overlapping pages actually land.
+ */
+export const DEFAULT_SIMILARITY_THRESHOLD = 0.92;
 
-/** Pages whose similarity to the site centroid falls below this are outliers. */
+/**
+ * Fallback floor for low-relevance outliers. Only used when the crawl is too
+ * small to derive a threshold from its own distribution — see
+ * `suggestRelevanceThreshold`, which is what normally decides this.
+ */
 export const DEFAULT_RELEVANCE_THRESHOLD = 0.7;
+
+/** Below this many pages, the spread isn't meaningful enough to derive a threshold. */
+const MIN_PAGES_FOR_ADAPTIVE_THRESHOLD = 5;
+
+export interface RelevanceStats {
+  mean: number;
+  stdDev: number;
+  min: number;
+  max: number;
+}
+
+export function relevanceStats(scores: number[]): RelevanceStats {
+  if (scores.length === 0) return { mean: 0, stdDev: 0, min: 0, max: 0 };
+  const mean = scores.reduce((s, v) => s + v, 0) / scores.length;
+  const variance = scores.reduce((s, v) => s + (v - mean) ** 2, 0) / scores.length;
+  return { mean, stdDev: Math.sqrt(variance), min: Math.min(...scores), max: Math.max(...scores) };
+}
+
+/**
+ * "Off-topic" only means anything relative to the rest of the site. An absolute
+ * cutoff is model-dependent and site-dependent: on a tightly focused site every
+ * page scores high against the centroid, so a fixed 0.7 flags nothing at all.
+ * One standard deviation below the mean picks out the actual tail instead.
+ */
+export function suggestRelevanceThreshold(scores: number[]): number {
+  if (scores.length < MIN_PAGES_FOR_ADAPTIVE_THRESHOLD) return DEFAULT_RELEVANCE_THRESHOLD;
+  const { mean, stdDev } = relevanceStats(scores);
+  return Math.max(0, Math.min(1, mean - stdDev));
+}
 
 export interface EmbeddingConfig {
   provider: EmbeddingProvider;
@@ -105,9 +146,45 @@ export function textForPage(page: PageData, target: EmbeddingTarget): string {
 
 // ─── Providers ─────────────────────────────────────────────────────────────────
 
-/** Per-request batch size. Kept modest so one failure loses little work. */
-const BATCH_SIZE = 20;
+/**
+ * Per-request batch size. Small on purpose: free Gemini keys rate-limit on
+ * requests-per-minute, and a smaller batch loses less work when one fails.
+ */
+const BATCH_SIZE = 10;
 const REQUEST_TIMEOUT_MS = 60_000;
+
+/** Retry budget for rate limits and transient provider errors. */
+const MAX_RETRIES = 5;
+const BASE_BACKOFF_MS = 2000;
+
+function statusOf(err: unknown): number | undefined {
+  return (err as { response?: { status?: number } })?.response?.status;
+}
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Run an embedding request, backing off on 429 (rate limit) and 5xx. Free-tier
+ * keys hit 429 routinely, and failing the whole run for it would make the
+ * feature unusable for exactly the users most likely to rely on it.
+ */
+async function withRetry<T>(fn: () => Promise<T>, onRetry?: (attempt: number, waitMs: number) => void): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = statusOf(err);
+      const retryable = status === 429 || status === 503 || status === 500 || status === undefined;
+      if (!retryable || attempt === MAX_RETRIES) throw err;
+      const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt);
+      onRetry?.(attempt + 1, backoff);
+      await wait(backoff);
+    }
+  }
+  throw lastErr;
+}
 
 async function embedGemini(texts: string[], config: EmbeddingConfig): Promise<number[][]> {
   const model = config.model || DEFAULT_EMBEDDING_MODELS.gemini;
@@ -160,11 +237,16 @@ async function embedOllama(texts: string[], config: EmbeddingConfig): Promise<nu
  */
 export async function embedBatch(texts: string[], config: EmbeddingConfig): Promise<number[][]> {
   if (texts.length === 0) return [];
-  switch (config.provider) {
-    case 'gemini': return embedGemini(texts, config);
-    case 'openai': return embedOpenAI(texts, config);
-    case 'ollama': return embedOllama(texts, config);
-  }
+  return withRetry(
+    () => {
+      switch (config.provider) {
+        case 'gemini': return embedGemini(texts, config);
+        case 'openai': return embedOpenAI(texts, config);
+        case 'ollama': return embedOllama(texts, config);
+      }
+    },
+    (attempt, waitMs) => console.warn(`[EMBEDDINGS] ${config.provider} rate-limited, retry ${attempt} in ${waitMs}ms`),
+  );
 }
 
 /**

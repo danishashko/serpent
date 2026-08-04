@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, CrawlConfig, AppSettings, AIProvider, ReportConfig, BulkExportRequest, PerUrlExportRequest, RobotsTestRequest, SitemapGenerateOptions, EmbeddingRunConfig } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, ReportConfig, BulkExportRequest, PerUrlExportRequest, RobotsTestRequest, SitemapGenerateOptions, EmbeddingRunConfig, ScheduleDiffSummary } from '../types/index';
 
 // Expose a safe, typed API to the renderer process
 contextBridge.exposeInMainWorld('api', {
@@ -147,6 +147,9 @@ contextBridge.exposeInMainWorld('api', {
   scheduleToggle: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC.SCHEDULE_TOGGLE, id, enabled),
   onScheduleTriggered: (cb: (data: { scheduleId: string; name: string; crawlId: string }) => void) => {
     ipcRenderer.on('schedule:triggered', (_event, data) => cb(data));
+  },
+  onScheduleCompared: (cb: (data: ScheduleDiffSummary) => void) => {
+    ipcRenderer.on('schedule:compared', (_event, data) => cb(data));
   },
 
   // Sitemap (XML)

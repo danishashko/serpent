@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import axios from 'axios';
 import {
   normalize,
   cosineSimilarity,
@@ -9,6 +10,10 @@ import {
   analyzeSemantics,
   rankByQuery,
   mostRepresentative,
+  embedBatch,
+  relevanceStats,
+  suggestRelevanceThreshold,
+  DEFAULT_RELEVANCE_THRESHOLD,
   MAX_EMBED_CHARS,
 } from '../main/embeddings';
 import type { PageData } from '../types/index';
@@ -215,5 +220,112 @@ describe('rankByQuery / mostRepresentative', () => {
 
   it('returns null when there is nothing to pick from', () => {
     expect(mostRepresentative([])).toBeNull();
+  });
+});
+
+describe('embedBatch retry behaviour', () => {
+  const CONFIG = { provider: 'gemini' as const, model: 'gemini-embedding-001', apiKey: 'k' };
+  const okResponse = { data: { embeddings: [{ values: [1, 0, 0] }] } };
+  const httpErr = (status: number) => Object.assign(new Error(`HTTP ${status}`), { response: { status } });
+
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  // Drives the retry loop's timers while the promise is in flight. The settled
+  // wrapper is attached before any timer advances, so a rejection always has a
+  // handler and never surfaces as an unhandled rejection.
+  async function runWithTimers<T>(p: Promise<T>): Promise<T> {
+    const settled = p.then(
+      value => ({ ok: true as const, value }),
+      error => ({ ok: false as const, error }),
+    );
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(70_000);
+    }
+    const result = await settled;
+    if (!result.ok) throw result.error;
+    return result.value;
+  }
+
+  it('retries a 429 and succeeds', async () => {
+    const spy = vi.spyOn(axios, 'post')
+      .mockRejectedValueOnce(httpErr(429))
+      .mockResolvedValueOnce(okResponse);
+    const vectors = await runWithTimers(embedBatch(['hello'], CONFIG));
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(vectors[0][0]).toBeCloseTo(1, 6);
+  });
+
+  it('retries 503 and 500 as transient', async () => {
+    const spy = vi.spyOn(axios, 'post')
+      .mockRejectedValueOnce(httpErr(503))
+      .mockRejectedValueOnce(httpErr(500))
+      .mockResolvedValueOnce(okResponse);
+    await runWithTimers(embedBatch(['hello'], CONFIG));
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a 400 — a bad request will never succeed', async () => {
+    const spy = vi.spyOn(axios, 'post').mockRejectedValue(httpErr(400));
+    await expect(runWithTimers(embedBatch(['hello'], CONFIG))).rejects.toThrow();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a 401 — a bad key will never succeed', async () => {
+    const spy = vi.spyOn(axios, 'post').mockRejectedValue(httpErr(401));
+    await expect(runWithTimers(embedBatch(['hello'], CONFIG))).rejects.toThrow();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up after the retry budget instead of looping forever', async () => {
+    const spy = vi.spyOn(axios, 'post').mockRejectedValue(httpErr(429));
+    await expect(runWithTimers(embedBatch(['hello'], CONFIG))).rejects.toThrow();
+    expect(spy).toHaveBeenCalledTimes(6); // initial + 5 retries
+  });
+
+  it('makes no request at all for an empty batch', async () => {
+    const spy = vi.spyOn(axios, 'post');
+    expect(await embedBatch([], CONFIG)).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('adaptive relevance threshold', () => {
+  it('reports mean, spread and range', () => {
+    const s = relevanceStats([0.8, 0.9, 1.0]);
+    expect(s.mean).toBeCloseTo(0.9, 6);
+    expect(s.min).toBeCloseTo(0.8, 6);
+    expect(s.max).toBeCloseTo(1.0, 6);
+    expect(s.stdDev).toBeGreaterThan(0);
+  });
+
+  it('handles an empty set without producing NaN', () => {
+    expect(relevanceStats([])).toEqual({ mean: 0, stdDev: 0, min: 0, max: 0 });
+  });
+
+  it('puts the floor one standard deviation below the mean', () => {
+    const scores = [0.80, 0.85, 0.86, 0.88, 0.90, 0.92, 0.94];
+    const { mean, stdDev } = relevanceStats(scores);
+    expect(suggestRelevanceThreshold(scores)).toBeCloseTo(mean - stdDev, 6);
+  });
+
+  it('actually flags the tail on a tightly focused site', () => {
+    // The organikpi.com run: every page scored 0.78–0.95 against the centroid,
+    // so the old fixed 0.7 floor could never flag anything at all.
+    const scores = [0.782, 0.83, 0.85, 0.86, 0.87, 0.88, 0.89, 0.90, 0.91, 0.947];
+    const floor = suggestRelevanceThreshold(scores);
+    const flagged = scores.filter(s => s < floor);
+    expect(floor).toBeGreaterThan(0.7);
+    expect(flagged.length).toBeGreaterThan(0);
+    expect(flagged.length).toBeLessThan(scores.length / 2);
+  });
+
+  it('falls back to the fixed default when there are too few pages to judge', () => {
+    expect(suggestRelevanceThreshold([0.9, 0.8])).toBe(DEFAULT_RELEVANCE_THRESHOLD);
+  });
+
+  it('never suggests a threshold outside [0, 1]', () => {
+    expect(suggestRelevanceThreshold([-1, -1, -1, -1, -1, 1])).toBeGreaterThanOrEqual(0);
+    expect(suggestRelevanceThreshold([1, 1, 1, 1, 1, 1])).toBeLessThanOrEqual(1);
   });
 });

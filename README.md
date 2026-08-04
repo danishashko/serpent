@@ -61,7 +61,8 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - **Scoping modes** — full domain, single subdomain, start-folder only, or an exact **URL list** (paste, clipboard, sitemap, or file — across multiple domains)
 - **Include / exclude URL patterns** (regex) and **URL parameter stripping** (`utm_*`, `fbclid`, …) to keep crawls focused and deduplicated
 - **Configurable User-Agent** (Googlebot, Bingbot, Chrome presets or custom), **custom HTTP headers**, **HTTP Basic auth** (scoped to the host you entered it for — never forwarded across an off-host redirect), and **session cookies** for authenticated crawls
-- **Scheduled crawls** — recurring local crawls that run while the app is open
+- **Scheduled crawls** — recurring local crawls that run while the app is open, with optional **auto-compare** that diffs each run against the previous one
+- **Crawl retention** — optionally auto-delete crawls after 30/60/90 days, with a per-crawl lock to keep the ones that matter
 - **Headless CLI mode** — `serpent --headless-crawl=<url> --output=pages.csv` crawls and exports without opening a window
 - **Pause / Resume / Stop** with persistent crawl state and cost continuity
 - **Crawl comparison** — diff any two crawls to see new, removed, and changed pages
@@ -77,12 +78,27 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - Word count, page size, and text-to-HTML ratio
 - **Redirect chain detection** — every hop with status codes
 - **Duplicate content detection** — exact (SHA-256) and **near-duplicate** (64-bit simhash, ~90%+ similarity)
+- **Uncrawlable link detection** — `<div href>`, `javascript:` hrefs, and onclick-only anchors that search engines can't reliably follow
+- **HTML over 2MB** — Googlebot only reads the first 2MB of a document
 - **Soft-404 detection** — 200-status pages whose content reads like an error page
 - **Hreflang validation** — extracts and validates `hreflang`/`x-default`
 - **Custom extraction** — pull any data with your own CSS selectors
 - **Structured data / JSON-LD** — Schema.org type extraction + validation
 - **Open Graph & Twitter Cards** — full social-tag extraction
 - **Security headers** — HSTS, CSP, X-Frame-Options, X-Content-Type-Options
+</details>
+
+<details>
+<summary><b>🧬 Semantic Analysis (embeddings)</b></summary>
+
+Hashing catches pages that share wording. Embeddings catch pages that share *meaning* — the ones that actually cannibalise each other.
+
+- **Semantically similar pages** — cosine similarity across the crawl with an adjustable threshold, so you can find two posts covering the same subject in completely different words
+- **Low-relevance content** — pages measured against the site's centroid; the outliers are what's off-topic for this site
+- **Semantic search** — query the crawl by meaning instead of keyword presence
+- **Most representative page** — the page closest to the site's overall subject matter
+- Vectors come from **Gemini, OpenAI, or local Ollama**, are L2-normalised, and are stored as 768-dim Float32 blobs (~3 KB/page)
+- Works on full page text (enable **Store page text** before crawling) or on titles + meta descriptions for any existing crawl
 </details>
 
 <details>
@@ -120,7 +136,7 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - **Crawl comparison** — side-by-side diff of new / removed / changed pages
 - **Cost monitor** — real-time Bright Data spend, daily history chart, and hard-stop limits
 - **SQLite** local storage (zero cloud dependency)
-- **CSV & JSON export** with sortable, filterable tables across 9 dedicated tabs
+- **CSV & JSON export** with sortable, filterable tables across every results tab
 </details>
 
 ---
@@ -196,7 +212,7 @@ flowchart LR
 
 1. **Configure** your crawl — URL, depth, concurrency, rate limit, extraction options.
 2. **Crawl** with the local engine or Bright Data (pause/resume supported).
-3. **Review** data across 9 tabs — Pages, Links, Images, Issues, Redirects, Hreflang, Duplicates, Extractions, SERP.
+3. **Review** data across the results tabs — Pages, Links, Images, Issues, Sitemap, Semantic, Redirects, Hreflang, Duplicates, Extractions, SERP.
 4. **Analyze** with your AI provider — severity-scored issues with fix suggestions.
 5. **Visualize** as a treemap, compare crawls, and connect GSC for orphan-page detection.
 6. **Export** results as CSV or JSON.
@@ -222,7 +238,10 @@ flowchart LR
 | Redirect chains | ✅ | ✅ |
 | Hreflang validation | ✅ | ✅ |
 | Custom extraction | ✅ CSS selectors | ✅ CSS/XPath/Regex |
-| Duplicate detection | ✅ Content hashing | ✅ Near-duplicate |
+| Duplicate detection | ✅ Exact + near-duplicate (simhash) | ✅ Near-duplicate |
+| Semantic similarity (embeddings) | ✅ Gemini / OpenAI / local Ollama | ✅ |
+| Semantic search over a crawl | ✅ | ✅ |
+| Uncrawlable link detection | ✅ | ✅ |
 | JS rendering | ✅ Chromium built-in | ✅ (Chrome required) |
 | Bot-protection bypass | ✅ Bright Data | ❌ |
 | SERP analysis | ✅ Bright Data | ❌ |
@@ -308,6 +327,8 @@ serpent/
 │   │   ├── crawler-brightdata.ts    # Bright Data crawler
 │   │   ├── crawler-orchestrator.ts  # Crawl queue, scoping & rate limiting
 │   │   ├── ai-analyzer.ts           # Multi-LLM analysis + issue recommendations
+│   │   ├── embeddings.ts            # Vector embeddings + semantic similarity
+│   │   ├── uncrawlable-links.ts     # Google crawlable-link guidance checks
 │   │   ├── gsc-client.ts            # Google Search Console OAuth + analytics
 │   │   ├── serp-client.ts           # SERP ranking via Bright Data
 │   │   ├── cost-tracker.ts          # Bright Data spend monitoring

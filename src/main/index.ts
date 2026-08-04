@@ -20,7 +20,7 @@ import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportC
 import { v4 as uuidv4 } from 'uuid';
 import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules, upsertPsiScoresBatch, getPsiScoresByCrawl, purgeCrawlsOlderThan, deleteCrawl, setCrawlLocked, getCrawlById, getSchedule, setCrawlSchedule, getPreviousScheduleCrawl, setScheduleLastDiff, upsertEmbeddings, getEmbeddingsByCrawl, getEmbeddingMeta, clearEmbeddings, countPagesWithBodyText } from './database';
 import type { StoredEmbedding } from './database';
-import { embedAll, embedBatch, encodeVector, decodeVector, textForPage, analyzeSemantics, rankByQuery, mostRepresentative, DEFAULT_SIMILARITY_THRESHOLD, DEFAULT_RELEVANCE_THRESHOLD } from './embeddings';
+import { embedAll, embedBatch, encodeVector, decodeVector, textForPage, analyzeSemantics, rankByQuery, mostRepresentative, DEFAULT_SIMILARITY_THRESHOLD, suggestRelevanceThreshold, relevanceStats } from './embeddings';
 import type { EmbeddingConfig, EmbeddedPage } from './embeddings';
 import { analyzePsiBatch, PSI_MAX_URLS_KEYLESS } from './psi-client';
 import { autoUpdater } from 'electron-updater';
@@ -463,11 +463,18 @@ ipcMain.handle(IPC.SEMANTIC_ANALYZE, (_event, payload: { crawlId: string; simila
   const embedded: EmbeddedPage[] = stored.map(s => ({ url: s.url, vector: decodeVector(s.vector) }));
   const similarityThreshold = payload.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
   const results = analyzeSemantics(embedded, similarityThreshold);
+
+  // "Off-topic" is relative to this site, so when the caller hasn't pinned a
+  // threshold we derive one from the crawl's own spread rather than using a
+  // constant that means different things on different models and sites.
+  const relScores = results.map(r => r.relevanceScore);
   const analysis: SemanticAnalysis = {
     results: results.map(r => ({ ...r, crawlId: payload.crawlId })),
     representativeUrl: mostRepresentative(embedded)?.url ?? null,
     similarityThreshold,
-    relevanceThreshold: payload.relevanceThreshold ?? DEFAULT_RELEVANCE_THRESHOLD,
+    relevanceThreshold: payload.relevanceThreshold ?? suggestRelevanceThreshold(relScores),
+    relevanceStats: relevanceStats(relScores),
+    similarityStats: relevanceStats(results.map(r => r.closestScore).filter(s => s > 0)),
   };
   return analysis;
 });

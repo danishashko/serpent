@@ -4,7 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore, EmbeddingStatus, EmbeddingRunConfig, SemanticAnalysis, SemanticNeighbourRow } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore, EmbeddingStatus, EmbeddingRunConfig, SemanticAnalysis, SemanticNeighbourRow, ScheduleDiffSummary } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -94,6 +94,7 @@ declare global {
       scheduleDelete: (id: string) => Promise<{ success: boolean }>;
       scheduleToggle: (id: string, enabled: boolean) => Promise<{ success: boolean }>;
       onScheduleTriggered: (cb: (data: { scheduleId: string; name: string; crawlId: string }) => void) => void;
+      onScheduleCompared: (cb: (data: ScheduleDiffSummary) => void) => void;
       generateSitemap: (opts: SitemapGenerateOptions) => Promise<{ ok: boolean; canceled?: boolean; totalUrls?: number; files?: { filename: string; urlCount: number }[]; written?: string[]; error?: string }>;
       analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) => Promise<SitemapAnalysisResult>;
       sitemapFetchUrls: (sitemapUrl: string) => Promise<{ urls: string[]; error?: string }>;

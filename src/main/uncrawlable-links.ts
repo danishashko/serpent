@@ -39,21 +39,25 @@ export function extractUncrawlableLinks(
   const out: LinkData[] = [];
 
   const add = (el: Element, rawHref: string, reason: UncrawlableReason): void => {
-    // Resolve when the value is a real URL so the Links tab shows something
-    // useful; otherwise keep the raw attribute text (e.g. "javascript:goTo('x')").
     let targetUrl = rawHref;
     // A handler we cannot resolve is on-site navigation by nature, so it counts
     // as an internal outlink rather than being dropped from the internal report.
     let isInternal = true;
-    try {
-      const resolved = new URL(rawHref, pageUrl);
-      if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
-        resolved.hash = '';
-        targetUrl = resolved.toString();
-        isInternal = resolved.origin === baseOrigin;
+
+    // Only an actual href value is a URL. An onclick body is JavaScript, and
+    // resolving it against the page would turn goto('/x') into a plausible
+    // looking absolute URL that does not exist — so keep it verbatim.
+    if (reason !== 'onclick_only') {
+      try {
+        const resolved = new URL(rawHref, pageUrl);
+        if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
+          resolved.hash = '';
+          targetUrl = resolved.toString();
+          isInternal = resolved.origin === baseOrigin;
+        }
+      } catch {
+        // Not a resolvable URL — keep the raw text and treat it as internal.
       }
-    } catch {
-      // Not a resolvable URL — keep the raw text and treat it as internal.
     }
     out.push({
       id: uuidv4(),

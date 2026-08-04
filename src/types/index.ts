@@ -670,7 +670,11 @@ export interface SemanticAnalysis {
   /** Page closest to the site centroid. */
   representativeUrl: string | null;
   similarityThreshold: number;
+  /** Derived from this crawl's own spread unless the caller overrode it. */
   relevanceThreshold: number;
+  /** Observed distribution, so the UI can show where the thresholds sit. */
+  relevanceStats: { mean: number; stdDev: number; min: number; max: number };
+  similarityStats: { mean: number; stdDev: number; min: number; max: number };
 }
 
 // ─── Robots.txt tester ─────────────────────────────────────────────────────────

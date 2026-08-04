@@ -476,6 +476,18 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
 
   useEffect(() => { refresh(); }, []);
 
+  // Scheduled crawls fire and finish while this panel is already mounted, so
+  // without these the list keeps showing pre-run state (no next-run time, no
+  // auto-compare result) until the user navigates away and back.
+  useEffect(() => {
+    window.api.onScheduleTriggered(() => { refresh(); });
+    window.api.onScheduleCompared(() => { refresh(); });
+    return () => {
+      window.api.removeAllListeners('schedule:triggered');
+      window.api.removeAllListeners('schedule:compared');
+    };
+  }, []);
+
   const handleAdd = async () => {
     if (!url.trim()) { showToast('Enter a URL to schedule', 'error'); return; }
     setAdding(true);
