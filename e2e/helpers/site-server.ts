@@ -78,6 +78,23 @@ const routes: Record<string, { status: number; body: string; type?: string }> = 
     status: 404,
     body: page('Not Found', '<p>404</p>'),
   },
+  // Deliberately NOT linked from '/': specs that assert crawl totals would
+  // otherwise change meaning. Seed a crawl here directly to reach it.
+  '/uncrawlable': {
+    status: 200,
+    body: page('Uncrawlable links', `
+      <a href="/about">A normal link</a>
+      <a href="/contact" onclick="track()">Normal link that also tracks</a>
+      <div href="/div-href-target">href on a div</div>
+      <span href="/span-href-target">href on a span</span>
+      <a href="javascript:goTo('products')">javascript href</a>
+      <a onclick="goto('/onclick-target')">onclick with no href</a>
+      <a href="#" onclick="nav()">onclick with hash href</a>
+      <a href="mailto:a@b.com">email</a>
+      <a href="tel:+1234">phone</a>
+      <a href="/huge">A very large page</a>
+    `),
+  },
   '/robots.txt': {
     status: 200,
     body: 'User-agent: *\nAllow: /\n',
@@ -102,6 +119,15 @@ const routes: Record<string, { status: number; body: string; type?: string }> = 
 export async function startSiteServer(): Promise<SiteServer> {
   const server: Server = createServer((req, res) => {
     const url = (req.url ?? '/').split('?')[0];
+
+    // Just over Googlebot's 2MB HTML cap. Generated per request rather than
+    // held in `routes` so every spec run doesn't carry 2MB of dead string.
+    if (url === '/huge') {
+      const body = page('Huge page', `<p>${'x'.repeat(2 * 1024 * 1024 + 50_000)}</p>`);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(body);
+      return;
+    }
 
     // Stub 1x1 transparent PNG for any /img/* request
     if (url.startsWith('/img/')) {
