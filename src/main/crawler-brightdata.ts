@@ -5,7 +5,7 @@ import { URL } from 'url';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { CrawlConfig, PageData, LinkData, ImageData } from '../types/index';
-import { CrawlResult } from './crawler-local';
+import { CrawlResult, MAX_BODY_TEXT_CHARS } from './crawler-local';
 import { simhash64 } from './simhash';
 import { extractUncrawlableLinks } from './uncrawlable-links';
 
@@ -225,6 +225,7 @@ function buildResultFromHtml(
   const images: ImageData[] = [];
   const discoveredUrls: string[] = [];
   let uncrawlableOutlinks = 0;
+  let bodyText: string | null = null;
 
   let title: string | null = null;
   let titleLength: number | null = null;
@@ -311,9 +312,12 @@ function buildResultFromHtml(
       isCanonicalized = !!canonicalUrl && normalizeUrlForComparison(canonicalUrl!) !== normalizeUrlForComparison(url);
     }
 
-    const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
-    wordCount = bodyText.split(' ').filter(w => w.length > 0).length;
-    textRatio = html.length > 0 ? Math.round((bodyText.length / html.length) * 100 * 10) / 10 : null;
+    const normalizedBody = $('body').text().replace(/\s+/g, ' ').trim();
+    wordCount = normalizedBody.split(' ').filter(w => w.length > 0).length;
+    textRatio = html.length > 0 ? Math.round((normalizedBody.length / html.length) * 100 * 10) / 10 : null;
+    if (config.extractBodyText) {
+      bodyText = normalizedBody.slice(0, MAX_BODY_TEXT_CHARS) || null;
+    }
 
     if (config.extractLinks) {
       $('a[href]').each((_i, el) => {
@@ -388,9 +392,9 @@ function buildResultFromHtml(
     }
 
     // Content hash (SHA-256 of normalized body text)
-    if (bodyText.length > 0) {
-      contentHash = createHash('sha256').update(bodyText).digest('hex');
-      simhash = simhash64(bodyText);
+    if (normalizedBody.length > 0) {
+      contentHash = createHash('sha256').update(normalizedBody).digest('hex');
+      simhash = simhash64(normalizedBody);
     }
 
     // Structured Data extraction (JSON-LD + Microdata)
@@ -523,6 +527,7 @@ function buildResultFromHtml(
     linkScore: 0,
     simhash,
     uncrawlableOutlinks,
+    bodyText,
   };
 
   return { page, links, images, discoveredUrls, redirectChain: [], hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults, bytesDownloaded: pageSizeBytes };

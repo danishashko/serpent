@@ -16,9 +16,12 @@ import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, 
 import { generateSitemap as buildSitemap } from './sitemap-generator';
 import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
-import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress, PsiStrategy, ScheduleDiffSummary } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress, PsiStrategy, ScheduleDiffSummary, EmbeddingProvider, EmbeddingTarget, EmbeddingRunConfig, EmbeddingStatus, SemanticAnalysis } from '../types/index';
 import { v4 as uuidv4 } from 'uuid';
-import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules, upsertPsiScoresBatch, getPsiScoresByCrawl, purgeCrawlsOlderThan, deleteCrawl, setCrawlLocked, getCrawlById, getSchedule, setCrawlSchedule, getPreviousScheduleCrawl, setScheduleLastDiff } from './database';
+import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules, upsertPsiScoresBatch, getPsiScoresByCrawl, purgeCrawlsOlderThan, deleteCrawl, setCrawlLocked, getCrawlById, getSchedule, setCrawlSchedule, getPreviousScheduleCrawl, setScheduleLastDiff, upsertEmbeddings, getEmbeddingsByCrawl, getEmbeddingMeta, clearEmbeddings, countPagesWithBodyText } from './database';
+import type { StoredEmbedding } from './database';
+import { embedAll, embedBatch, encodeVector, decodeVector, textForPage, analyzeSemantics, rankByQuery, mostRepresentative, DEFAULT_SIMILARITY_THRESHOLD, DEFAULT_RELEVANCE_THRESHOLD } from './embeddings';
+import type { EmbeddingConfig, EmbeddedPage } from './embeddings';
 import { analyzePsiBatch, PSI_MAX_URLS_KEYLESS } from './psi-client';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
@@ -375,6 +378,118 @@ async function runHeadlessCrawl(url: string): Promise<void> {
   console.log(`[SERPENT] headless crawl of ${url} (max ${maxUrls} URLs, depth ${maxDepth})`);
   await orchestrator.startCrawl(config);
 }
+
+// ─── Semantic embeddings ───────────────────────────────────────────────────────
+
+/** Resolve the API key / URL for an embedding provider from stored settings. */
+async function embeddingCredentials(provider: EmbeddingProvider): Promise<{ apiKey?: string; ollamaUrl?: string }> {
+  switch (provider) {
+    case 'gemini':
+      return { apiKey: (await keytar.getPassword(KEYTAR_SERVICE, 'gemini_api_key')) ?? undefined };
+    case 'openai':
+      return { apiKey: (await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key')) ?? undefined };
+    case 'ollama':
+      return { ollamaUrl: getConfig('ollama_url') || 'http://localhost:11434' };
+  }
+}
+
+ipcMain.handle(IPC.EMBEDDINGS_STATUS, (_event, crawlId: string) => {
+  const meta = getEmbeddingMeta(crawlId);
+  const pages = getPagesByCrawl(crawlId);
+  const status: EmbeddingStatus = {
+    crawlId,
+    embedded: meta?.count ?? 0,
+    totalPages: pages.filter(p => p.statusCode === 200).length,
+    provider: (meta?.provider as EmbeddingProvider) ?? null,
+    model: meta?.model ?? null,
+    target: (meta?.target as EmbeddingTarget) ?? null,
+    hasBodyText: countPagesWithBodyText(crawlId) > 0,
+  };
+  return status;
+});
+
+ipcMain.handle(IPC.EMBEDDINGS_CLEAR, (_event, crawlId: string) => {
+  clearEmbeddings(crawlId);
+  return { success: true };
+});
+
+ipcMain.handle(IPC.EMBEDDINGS_GENERATE, async (_event, req: EmbeddingRunConfig) => {
+  try {
+    const creds = await embeddingCredentials(req.provider);
+    if (req.provider !== 'ollama' && !creds.apiKey) {
+      return { success: false, error: `No ${req.provider} API key saved. Add one in Settings.` };
+    }
+
+    // Only 200s are worth embedding; error pages would skew the site centroid.
+    const pages = getPagesByCrawl(req.crawlId).filter(p => p.statusCode === 200);
+    if (pages.length === 0) return { success: false, error: 'No successful pages in this crawl.' };
+
+    const config: EmbeddingConfig = { provider: req.provider, model: req.model, ...creds };
+    const texts = pages.map(p => textForPage(p, req.target));
+
+    const vectors = await embedAll(texts, config, (done, total) => {
+      mainWindow?.webContents.send(IPC.EMBEDDINGS_PROGRESS, { crawlId: req.crawlId, done, total });
+    });
+
+    const rows: StoredEmbedding[] = [];
+    vectors.forEach((vec, i) => {
+      if (!vec || vec.length === 0) return;
+      rows.push({
+        url: pages[i].url,
+        provider: req.provider,
+        model: req.model,
+        target: req.target,
+        vector: encodeVector(vec),
+      });
+    });
+
+    if (rows.length === 0) return { success: false, error: 'Provider returned no embeddings.' };
+    upsertEmbeddings(req.crawlId, rows);
+    return { success: true, embedded: rows.length, skipped: pages.length - rows.length };
+  } catch (err) {
+    // Surface the provider's own message — "400 API key not valid" is far more
+    // actionable than a bare "Request failed with status code 400".
+    const res = (err as { response?: { status?: number; data?: unknown } }).response;
+    const detail = res
+      ? `${res.status ?? ''} ${JSON.stringify(res.data ?? {}).slice(0, 300)}`.trim()
+      : String(err);
+    console.error('[EMBEDDINGS]', detail);
+    return { success: false, error: detail };
+  }
+});
+
+ipcMain.handle(IPC.SEMANTIC_ANALYZE, (_event, payload: { crawlId: string; similarityThreshold?: number; relevanceThreshold?: number }) => {
+  const stored = getEmbeddingsByCrawl(payload.crawlId);
+  const embedded: EmbeddedPage[] = stored.map(s => ({ url: s.url, vector: decodeVector(s.vector) }));
+  const similarityThreshold = payload.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
+  const results = analyzeSemantics(embedded, similarityThreshold);
+  const analysis: SemanticAnalysis = {
+    results: results.map(r => ({ ...r, crawlId: payload.crawlId })),
+    representativeUrl: mostRepresentative(embedded)?.url ?? null,
+    similarityThreshold,
+    relevanceThreshold: payload.relevanceThreshold ?? DEFAULT_RELEVANCE_THRESHOLD,
+  };
+  return analysis;
+});
+
+ipcMain.handle(IPC.SEMANTIC_SEARCH, async (_event, payload: { crawlId: string; query: string }) => {
+  try {
+    const meta = getEmbeddingMeta(payload.crawlId);
+    if (!meta) return { success: false, error: 'No embeddings for this crawl yet.' };
+
+    const provider = meta.provider as EmbeddingProvider;
+    const creds = await embeddingCredentials(provider);
+    // The query has to be embedded by the same model, or the vectors aren't comparable.
+    const [queryVector] = await embedBatch([payload.query], { provider, model: meta.model, ...creds });
+    if (!queryVector) return { success: false, error: 'Could not embed the query.' };
+
+    const stored = getEmbeddingsByCrawl(payload.crawlId);
+    const embedded: EmbeddedPage[] = stored.map(s => ({ url: s.url, vector: decodeVector(s.vector) }));
+    return { success: true, results: rankByQuery(queryVector, embedded) };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
 
 // ─── Crawl retention ───────────────────────────────────────────────────────────
 

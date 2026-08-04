@@ -4,7 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore, EmbeddingStatus, EmbeddingRunConfig, SemanticAnalysis, SemanticNeighbourRow } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -36,6 +36,12 @@ declare global {
       onAIProgress: (cb: (data: unknown) => void) => void;
       onLinksUpdated: (cb: (crawlId: string) => void) => void;
       removeAllListeners: (channel: string) => void;
+      embeddingsStatus: (crawlId: string) => Promise<EmbeddingStatus>;
+      embeddingsGenerate: (req: EmbeddingRunConfig) => Promise<{ success: boolean; embedded?: number; skipped?: number; error?: string }>;
+      embeddingsClear: (crawlId: string) => Promise<{ success: boolean }>;
+      onEmbeddingsProgress: (cb: (data: { crawlId: string; done: number; total: number }) => void) => void;
+      semanticAnalyze: (payload: { crawlId: string; similarityThreshold?: number; relevanceThreshold?: number }) => Promise<SemanticAnalysis>;
+      semanticSearch: (payload: { crawlId: string; query: string }) => Promise<{ success: boolean; results?: SemanticNeighbourRow[]; error?: string }>;
       getCrawls: () => Promise<CrawlRecord[]>;
       deleteCrawl: (crawlId: string) => Promise<{ success: boolean; error?: string }>;
       setCrawlLocked: (crawlId: string, locked: boolean) => Promise<{ success: boolean; error?: string }>;

@@ -5,6 +5,7 @@ import SiteMap from './SiteMap';
 import ExportModal from './ExportModal';
 import IssuesTab from './IssuesTab';
 import SitemapPanel from './SitemapPanel';
+import SemanticPanel from './SemanticPanel';
 
 interface Props {
   pages: PageData[];
@@ -29,7 +30,7 @@ interface Props {
   onContentGapsUpdate?: (gaps: ContentGap[]) => void;
 }
 
-type Tab = 'pages' | 'links' | 'images' | 'issues_v2' | 'issues' | 'sitemap' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map' | 'geo' | 'perf' | 'competitors' | 'content_gaps';
+type Tab = 'pages' | 'links' | 'images' | 'issues_v2' | 'issues' | 'sitemap' | 'semantic' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map' | 'geo' | 'perf' | 'competitors' | 'content_gaps';
 type IssueFilter =
   | 'all'
   | 'missing_title'
@@ -600,7 +601,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     </th>
   );
 
-  const tabs: Tab[] = ['pages', 'links', 'images', 'issues_v2', 'issues', 'sitemap', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf', 'competitors', 'content_gaps'];
+  const tabs: Tab[] = ['pages', 'links', 'images', 'issues_v2', 'issues', 'sitemap', 'semantic', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf', 'competitors', 'content_gaps'];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -632,6 +633,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               {t === 'images' && `Images (${images.length})`}
               {t === 'issues_v2' && 'Issues'}
               {t === 'sitemap' && 'Sitemap'}
+              {t === 'semantic' && 'Semantic'}
               {t === 'issues' && `Issues List (${totalIssueCount})`}
               {t === 'redirects' && `Redirects (${redirects.length})`}
               {t === 'hreflang' && `Hreflang (${hreflang.length})`}
@@ -1001,6 +1003,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
 
         {tab === 'sitemap' && (
           <SitemapPanel crawlId={crawlId} pages={pages} />
+        )}
+
+        {tab === 'semantic' && (
+          <SemanticPanel crawlId={crawlId} showToast={showToast} />
         )}
 
         {tab === 'links' && (

@@ -279,6 +279,25 @@ function createTables(): void {
   // Crawl retention lock — migration for existing DBs
   try { db.exec('ALTER TABLE crawls ADD COLUMN locked INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
 
+  // Body text for semantic embeddings — migration for existing DBs
+  try { db.exec('ALTER TABLE pages ADD COLUMN body_text TEXT'); } catch { /* already exists */ }
+
+  // Page embeddings. Vectors are L2-normalised Float32 blobs.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS page_embeddings (
+      crawl_id TEXT NOT NULL REFERENCES crawls(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      target TEXT NOT NULL,
+      dims INTEGER NOT NULL,
+      vector BLOB NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (crawl_id, url)
+    );
+    CREATE INDEX IF NOT EXISTS idx_page_embeddings_crawl ON page_embeddings(crawl_id);
+  `);
+
   // Auto-compare for scheduled crawls — migration for existing DBs.
   // The `schedules` half runs after that table is created, further down.
   try { db.exec('ALTER TABLE crawls ADD COLUMN schedule_id TEXT'); } catch { /* already exists */ }
@@ -459,7 +478,7 @@ export function insertPage(page: PageData): void {
       twitter_card, twitter_title, twitter_description, twitter_image,
       schema_types, schema_json, schema_errors, has_structured_data,
       has_hsts, has_csp, x_frame_options, x_content_type_options, image_count, link_score, simhash,
-      uncrawlable_outlinks
+      uncrawlable_outlinks, body_text
     ) VALUES (
       @id, @crawlId, @url, @statusCode, @contentType,
       @title, @titleLength, @titlePixelWidth,
@@ -471,7 +490,7 @@ export function insertPage(page: PageData): void {
       @twitterCard, @twitterTitle, @twitterDescription, @twitterImage,
       @schemaTypes, @schemaJson, @schemaErrors, @hasStructuredData,
       @hasHSTS, @hasCSP, @xFrameOptions, @xContentTypeOptions, @imageCount, @linkScore, @simhash,
-      @uncrawlableOutlinks
+      @uncrawlableOutlinks, @bodyText
     )
   `).run({
     id: page.id,
@@ -524,6 +543,7 @@ export function insertPage(page: PageData): void {
     linkScore: page.linkScore,
     simhash: page.simhash,
     uncrawlableOutlinks: page.uncrawlableOutlinks ?? 0,
+    bodyText: page.bodyText ?? null,
   });
 }
 
@@ -578,7 +598,7 @@ export function getPagesByCrawl(crawlId: string): PageData[] {
       has_hsts as hasHSTS, has_csp as hasCSP,
       x_frame_options as xFrameOptions, x_content_type_options as xContentTypeOptions,
       image_count as imageCount, link_score as linkScore, simhash,
-      uncrawlable_outlinks as uncrawlableOutlinks
+      uncrawlable_outlinks as uncrawlableOutlinks, body_text as bodyText
     FROM pages WHERE crawl_id = ? ORDER BY created_at ASC
   `).all(crawlId) as PageData[];
 }
@@ -1187,6 +1207,68 @@ export function getPsiScoresByCrawl(crawlId: string): PsiScore[] {
       field_overall_category as fieldOverallCategory, fetched_at as fetchedAt
     FROM psi_scores WHERE crawl_id = ? ORDER BY performance_score ASC
   `).all(crawlId) as PsiScore[];
+}
+
+// ----- Page embeddings -----
+
+export interface StoredEmbedding {
+  url: string;
+  provider: string;
+  model: string;
+  target: string;
+  vector: Buffer;
+}
+
+export function upsertEmbeddings(crawlId: string, rows: StoredEmbedding[]): void {
+  const stmt = db.prepare(`
+    INSERT INTO page_embeddings (crawl_id, url, provider, model, target, dims, vector)
+    VALUES (@crawlId, @url, @provider, @model, @target, @dims, @vector)
+    ON CONFLICT(crawl_id, url) DO UPDATE SET
+      provider = excluded.provider, model = excluded.model, target = excluded.target,
+      dims = excluded.dims, vector = excluded.vector, created_at = datetime('now')
+  `);
+  const insertMany = db.transaction((batch: StoredEmbedding[]) => {
+    for (const r of batch) {
+      stmt.run({
+        crawlId,
+        url: r.url,
+        provider: r.provider,
+        model: r.model,
+        target: r.target,
+        dims: r.vector.byteLength / 4,
+        vector: r.vector,
+      });
+    }
+  });
+  insertMany(rows);
+}
+
+export function getEmbeddingsByCrawl(crawlId: string): StoredEmbedding[] {
+  return db.prepare(
+    'SELECT url, provider, model, target, vector FROM page_embeddings WHERE crawl_id = ?'
+  ).all(crawlId) as StoredEmbedding[];
+}
+
+export function getEmbeddingMeta(crawlId: string): { provider: string; model: string; target: string; count: number } | undefined {
+  const row = db.prepare(`
+    SELECT provider, model, target, COUNT(*) as count
+    FROM page_embeddings WHERE crawl_id = ?
+    GROUP BY provider, model, target
+    ORDER BY count DESC LIMIT 1
+  `).get(crawlId) as { provider: string; model: string; target: string; count: number } | undefined;
+  return row;
+}
+
+export function clearEmbeddings(crawlId: string): void {
+  db.prepare('DELETE FROM page_embeddings WHERE crawl_id = ?').run(crawlId);
+}
+
+/** How many pages in this crawl actually stored body text. */
+export function countPagesWithBodyText(crawlId: string): number {
+  const row = db.prepare(
+    "SELECT COUNT(*) as count FROM pages WHERE crawl_id = ? AND body_text IS NOT NULL AND body_text != ''"
+  ).get(crawlId) as { count: number };
+  return row.count;
 }
 
 // ----- Scheduled crawls -----

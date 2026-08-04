@@ -63,6 +63,9 @@ export interface CrawlConfig {
   stripUrlParams?: string[];
   // Restrict spider crawling to URLs under the seed URL's folder
   restrictToStartPath?: boolean;
+  // Store page body text (capped) so semantic embeddings can be built later.
+  // Off by default — it materially increases database size on large crawls.
+  extractBodyText?: boolean;
 }
 
 export type PageStatus = 'ok' | 'redirect' | 'error' | 'pending';
@@ -123,6 +126,8 @@ export interface PageData {
   simhash: string | null;
   /** Count of internal outlinks on this page that are not crawlable per Google's guidance. */
   uncrawlableOutlinks: number;
+  /** Body text, capped, stored only when the crawl enabled extractBodyText. */
+  bodyText?: string | null;
 }
 
 /** Whether a link follows Google's crawlable-link guidance. */
@@ -619,6 +624,55 @@ export interface ScheduleDiffSummary {
   comparedAt: string;
 }
 
+// ─── Semantic embeddings ───────────────────────────────────────────────────────
+
+/** Providers that expose an embeddings endpoint. Anthropic and OpenRouter do not. */
+export type EmbeddingProvider = 'gemini' | 'openai' | 'ollama';
+
+/** What gets embedded: full page text, or just the title + meta description. */
+export type EmbeddingTarget = 'text' | 'title';
+
+export interface EmbeddingRunConfig {
+  crawlId: string;
+  provider: EmbeddingProvider;
+  model: string;
+  target: EmbeddingTarget;
+}
+
+export interface EmbeddingStatus {
+  crawlId: string;
+  embedded: number;
+  totalPages: number;
+  provider: EmbeddingProvider | null;
+  model: string | null;
+  target: EmbeddingTarget | null;
+  /** True when the crawl stored body text, so 'text' target is meaningful. */
+  hasBodyText: boolean;
+}
+
+export interface SemanticNeighbourRow {
+  url: string;
+  score: number;
+}
+
+export interface SemanticResult {
+  crawlId: string;
+  url: string;
+  closestUrl: string | null;
+  closestScore: number;
+  similarCount: number;
+  relevanceScore: number;
+  neighbours: SemanticNeighbourRow[];
+}
+
+export interface SemanticAnalysis {
+  results: SemanticResult[];
+  /** Page closest to the site centroid. */
+  representativeUrl: string | null;
+  similarityThreshold: number;
+  relevanceThreshold: number;
+}
+
 // ─── Robots.txt tester ─────────────────────────────────────────────────────────
 
 export interface RobotsTestRequest {
@@ -730,6 +784,14 @@ export const IPC = {
 
   // Robots.txt tester
   ROBOTS_TEST: 'robots:test',
+
+  // Semantic embeddings
+  EMBEDDINGS_GENERATE: 'embeddings:generate',
+  EMBEDDINGS_PROGRESS: 'embeddings:progress',
+  EMBEDDINGS_STATUS: 'embeddings:status',
+  EMBEDDINGS_CLEAR: 'embeddings:clear',
+  SEMANTIC_ANALYZE: 'semantic:analyze',
+  SEMANTIC_SEARCH: 'semantic:search',
 
   // Scheduled crawls
   SCHEDULE_LIST: 'schedule:list',

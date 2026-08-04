@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, CrawlConfig, AppSettings, AIProvider, ReportConfig, BulkExportRequest, PerUrlExportRequest, RobotsTestRequest, SitemapGenerateOptions } from '../types/index';
+import { IPC, CrawlConfig, AppSettings, AIProvider, ReportConfig, BulkExportRequest, PerUrlExportRequest, RobotsTestRequest, SitemapGenerateOptions, EmbeddingRunConfig } from '../types/index';
 
 // Expose a safe, typed API to the renderer process
 contextBridge.exposeInMainWorld('api', {
@@ -33,6 +33,18 @@ contextBridge.exposeInMainWorld('api', {
   removeAllListeners: (channel: string) => {
     ipcRenderer.removeAllListeners(channel);
   },
+
+  // Semantic embeddings
+  embeddingsStatus: (crawlId: string) => ipcRenderer.invoke(IPC.EMBEDDINGS_STATUS, crawlId),
+  embeddingsGenerate: (req: EmbeddingRunConfig) => ipcRenderer.invoke(IPC.EMBEDDINGS_GENERATE, req),
+  embeddingsClear: (crawlId: string) => ipcRenderer.invoke(IPC.EMBEDDINGS_CLEAR, crawlId),
+  onEmbeddingsProgress: (cb: (data: { crawlId: string; done: number; total: number }) => void) => {
+    ipcRenderer.on(IPC.EMBEDDINGS_PROGRESS, (_e, data) => cb(data));
+  },
+  semanticAnalyze: (payload: { crawlId: string; similarityThreshold?: number; relevanceThreshold?: number }) =>
+    ipcRenderer.invoke(IPC.SEMANTIC_ANALYZE, payload),
+  semanticSearch: (payload: { crawlId: string; query: string }) =>
+    ipcRenderer.invoke(IPC.SEMANTIC_SEARCH, payload),
 
   // Data retrieval
   getCrawls: () => ipcRenderer.invoke(IPC.DATA_GET_CRAWLS),

@@ -584,6 +584,7 @@ export default function CrawlConfig({
             { key: "extractLinks", label: "Internal / External links" },
             { key: "extractImages", label: "Images" },
             { key: "extractHreflang", label: "Hreflang tags" },
+            { key: "extractBodyText", label: "Store page text (for semantic analysis)" },
             { key: "respectRobots", label: "Respect robots.txt" },
           ].map(({ key, label }) => (
             <label key={key} className="check-row">

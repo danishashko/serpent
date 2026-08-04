@@ -16,6 +16,9 @@ const AVG_CHAR_PX = 7.2;
 // gzip bomb) can't buffer gigabytes into the main process.
 const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 
+// Cap on stored body text. Embedding models truncate well before this anyway.
+export const MAX_BODY_TEXT_CHARS = 10000;
+
 export const DEFAULT_USER_AGENT = 'Serpent/1.0 (SEO Crawler; +https://github.com/danishashko/serpent)';
 
 /**
@@ -370,6 +373,7 @@ export async function crawlPageLocal(
   const images: ImageData[] = [];
   const discoveredUrls: string[] = [];
   let uncrawlableOutlinks = 0;
+  let storedBodyText: string | null = null;
 
   // If the URL was redirected, record the redirect status code and skip content
   // parsing — the final destination's HTML belongs to a different URL.
@@ -500,8 +504,14 @@ export async function crawlPageLocal(
 
     // Word count + text ratio
     wordCount = extractWordCount($);
-    const bodyTextLen = $('body').text().replace(/\s+/g, ' ').trim().length;
-    textRatio = html.length > 0 ? Math.round((bodyTextLen / html.length) * 100 * 10) / 10 : null;
+    const normalizedBody = $('body').text().replace(/\s+/g, ' ').trim();
+    textRatio = html.length > 0 ? Math.round((normalizedBody.length / html.length) * 100 * 10) / 10 : null;
+
+    // Body text is only kept when asked for — it is the single biggest thing we
+    // could add to the database, and most crawls never need it.
+    if (config.extractBodyText) {
+      storedBodyText = normalizedBody.slice(0, MAX_BODY_TEXT_CHARS) || null;
+    }
 
     // Links
     if (config.extractLinks) {
@@ -720,6 +730,7 @@ export async function crawlPageLocal(
     linkScore: 0,
     simhash,
     uncrawlableOutlinks,
+    bodyText: storedBodyText,
   };
 
   return { page, links, images, discoveredUrls, redirectChain, hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults };
