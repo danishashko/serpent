@@ -167,6 +167,7 @@ export class CrawlOrchestrator extends EventEmitter {
       totalUrls: 0,
       completedUrls: 0,
       totalSpendUsd: 0,
+      locked: false,
     };
 
     insertCrawl(crawlRecord);

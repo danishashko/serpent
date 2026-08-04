@@ -209,6 +209,8 @@ export interface CrawlRecord {
   totalUrls: number;
   completedUrls: number;
   totalSpendUsd: number;
+  /** Locked crawls are exempt from the retention policy. */
+  locked: boolean;
 }
 
 export interface CrawlProgress {
@@ -292,6 +294,8 @@ export interface AppSettings {
   defaultStorageMode: StorageMode;
   /** Google PageSpeed Insights API key (optional — keyless works at very low volume) */
   psiApiKey: string | null;
+  /** Auto-delete settled crawls older than this many days. 0 = never (default). */
+  crawlRetentionDays: number;
 }
 
 export interface UsageStats {
@@ -664,6 +668,10 @@ export const IPC = {
 
   // Crawl comparison
   DATA_COMPARE_CRAWLS: 'data:compare-crawls',
+
+  // Crawl retention
+  CRAWL_DELETE: 'crawl:delete',
+  CRAWL_SET_LOCKED: 'crawl:set-locked',
 
   // GSC
   GSC_CONNECT: 'gsc:connect',

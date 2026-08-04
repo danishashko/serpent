@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('api', {
 
   // Data retrieval
   getCrawls: () => ipcRenderer.invoke(IPC.DATA_GET_CRAWLS),
+  deleteCrawl: (crawlId: string) => ipcRenderer.invoke(IPC.CRAWL_DELETE, crawlId),
+  setCrawlLocked: (crawlId: string, locked: boolean) =>
+    ipcRenderer.invoke(IPC.CRAWL_SET_LOCKED, { crawlId, locked }),
   getPages: (crawlId: string) => ipcRenderer.invoke(IPC.DATA_GET_PAGES, crawlId),
   getLinks: (crawlId: string) => ipcRenderer.invoke(IPC.DATA_GET_LINKS, crawlId),
   getImages: (crawlId: string) => ipcRenderer.invoke(IPC.DATA_GET_IMAGES, crawlId),

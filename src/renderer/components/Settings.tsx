@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppSettings, AIProvider, CrawlSchedule } from '../../types/index';
+import { AppSettings, AIProvider, CrawlSchedule, CrawlRecord } from '../../types/index';
 
 interface Props {
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
@@ -26,6 +26,7 @@ const defaultSettings: AppSettings = {
   defaultEngine: 'local',
   defaultStorageMode: 'database',
   psiApiKey: null,
+  crawlRetentionDays: 0,
 };
 
 const AI_PROVIDERS: { value: AIProvider; label: string; icon: string }[] = [
@@ -438,6 +439,13 @@ export default function Settings({ showToast }: Props): React.ReactElement {
       {/* Scheduled crawls */}
       <ScheduledCrawlsSection showToast={showToast} />
 
+      {/* Saved crawls / retention */}
+      <CrawlRetentionSection
+        showToast={showToast}
+        retentionDays={settings.crawlRetentionDays ?? 0}
+        onRetentionChange={days => set('crawlRetentionDays', days)}
+      />
+
       <button
         className="btn-primary"
         onClick={handleSave}
@@ -566,6 +574,115 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
           {adding ? '⏳ Adding…' : '+ Add Schedule'}
         </button>
       </div>
+    </section>
+  );
+}
+
+// ─── Saved crawls / retention ─────────────────────────────────────────────────
+
+const RETENTION_OPTIONS = [
+  { value: 0, label: 'Never delete' },
+  { value: 30, label: 'Delete after 30 days' },
+  { value: 60, label: 'Delete after 60 days' },
+  { value: 90, label: 'Delete after 90 days' },
+];
+
+interface RetentionProps extends Props {
+  retentionDays: number;
+  onRetentionChange: (days: number) => void;
+}
+
+function CrawlRetentionSection({ showToast, retentionDays, onRetentionChange }: RetentionProps): React.ReactElement {
+  const [crawls, setCrawls] = useState<CrawlRecord[]>([]);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      setCrawls(await window.api.getCrawls());
+    } catch { /* main not ready */ }
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  const toggleLock = async (c: CrawlRecord) => {
+    await window.api.setCrawlLocked(c.id, !c.locked);
+    await refresh();
+  };
+
+  const remove = async (c: CrawlRecord) => {
+    // Two-step: the first click arms, the second deletes. Avoids a modal
+    // dialog, which would block the Electron renderer during e2e runs.
+    if (confirmId !== c.id) { setConfirmId(c.id); return; }
+    setConfirmId(null);
+    const res = await window.api.deleteCrawl(c.id);
+    showToast(res.success ? 'Crawl deleted' : (res.error ?? 'Delete failed'), res.success ? 'success' : 'error');
+    await refresh();
+  };
+
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString();
+
+  return (
+    <section data-testid="retention-section" style={{ marginBottom: 28 }}>
+      <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14 }}>
+        🗄️ Saved Crawls
+      </h3>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+        Crawls are kept forever by default. Locked crawls are never auto-deleted.
+      </p>
+
+      <div className="form-group" style={{ marginBottom: 12 }}>
+        <label>Retention</label>
+        <select
+          className="input"
+          data-testid="retention-select"
+          value={retentionDays}
+          onChange={e => onRetentionChange(Number(e.target.value))}
+        >
+          {RETENTION_OPTIONS.map(o => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+          Applied on save and once a day. Running and paused crawls are never deleted.
+        </p>
+      </div>
+
+      {crawls.length === 0 ? (
+        <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>No saved crawls yet.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 260, overflowY: 'auto' }}>
+          {crawls.map(c => (
+            <div key={c.id} data-testid="crawl-row" style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
+              border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-secondary)', fontSize: 11,
+            }}>
+              <button
+                className="btn-ghost"
+                data-testid="crawl-lock"
+                title={c.locked ? 'Locked — exempt from retention' : 'Unlocked'}
+                style={{ padding: '2px 6px', fontSize: 13 }}
+                onClick={() => toggleLock(c)}
+              >
+                {c.locked ? '🔒' : '🔓'}
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.startUrl}</div>
+                <div style={{ color: 'var(--text-muted)' }}>
+                  {fmtDate(c.startTime)} · {c.completedUrls} URLs · {c.status}
+                </div>
+              </div>
+              <button
+                className="btn-ghost"
+                data-testid="crawl-delete"
+                style={{ padding: '2px 8px', fontSize: 11, color: 'var(--accent-red)' }}
+                onClick={() => remove(c)}
+              >
+                {confirmId === c.id ? 'Confirm?' : '✕'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

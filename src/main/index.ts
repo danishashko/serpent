@@ -18,7 +18,7 @@ import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
 import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress, PsiStrategy } from '../types/index';
 import { v4 as uuidv4 } from 'uuid';
-import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules, upsertPsiScoresBatch, getPsiScoresByCrawl } from './database';
+import { listSchedules, insertSchedule, deleteSchedule, setScheduleEnabled, markScheduleRun, getDueSchedules, upsertPsiScoresBatch, getPsiScoresByCrawl, purgeCrawlsOlderThan, deleteCrawl, setCrawlLocked } from './database';
 import { analyzePsiBatch, PSI_MAX_URLS_KEYLESS } from './psi-client';
 import { autoUpdater } from 'electron-updater';
 import fs from 'fs';
@@ -205,6 +205,10 @@ app.whenReady().then(() => {
   // Scheduled crawls: check every 30 s while the app is open.
   setInterval(checkSchedules, 30_000);
 
+  // Retention: apply once at startup, then daily for long-running sessions.
+  applyCrawlRetention();
+  setInterval(applyCrawlRetention, 24 * 60 * 60 * 1000);
+
   // Auto-update (silent check + IPC events, only in production)
   if (!isDev) {
     autoUpdater.autoDownload = true;
@@ -369,6 +373,45 @@ async function runHeadlessCrawl(url: string): Promise<void> {
   console.log(`[SERPENT] headless crawl of ${url} (max ${maxUrls} URLs, depth ${maxDepth})`);
   await orchestrator.startCrawl(config);
 }
+
+// ─── Crawl retention ───────────────────────────────────────────────────────────
+
+/**
+ * Apply the retention policy. Locked crawls and crawls that are still running or
+ * paused are never touched. Off (0 days) by default — nothing is deleted unless
+ * the user opts in.
+ */
+function applyCrawlRetention(): void {
+  try {
+    const days = Number(getConfig('crawl_retention_days') ?? 0) || 0;
+    if (days <= 0) return;
+    const deleted = purgeCrawlsOlderThan(days, Date.now());
+    if (deleted.length > 0) {
+      console.log(`[RETENTION] deleted ${deleted.length} crawl(s) older than ${days} days`);
+      mainWindow?.webContents.send('retention:purged', { count: deleted.length, days });
+    }
+  } catch (err) {
+    console.error('[RETENTION]', err);
+  }
+}
+
+ipcMain.handle(IPC.CRAWL_DELETE, (_event, crawlId: string) => {
+  try {
+    deleteCrawl(crawlId);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.CRAWL_SET_LOCKED, (_event, payload: { crawlId: string; locked: boolean }) => {
+  try {
+    setCrawlLocked(payload.crawlId, payload.locked);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
 
 // ─── Scheduled crawls ──────────────────────────────────────────────────────────
 
@@ -609,6 +652,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
     defaultEngine: (getConfig('default_engine') as AppSettings['defaultEngine']) || 'local',
     defaultStorageMode: (getConfig('default_storage_mode') as AppSettings['defaultStorageMode']) || 'database',
     psiApiKey: psiApiKey || null,
+    crawlRetentionDays: Number(getConfig('crawl_retention_days') ?? 0) || 0,
   };
 
   return settings;
@@ -686,6 +730,11 @@ ipcMain.handle(IPC.SETTINGS_SAVE, async (_event, settings: Partial<AppSettings>)
     }
     if (settings.defaultEngine !== undefined) setConfig('default_engine', settings.defaultEngine);
     if (settings.defaultStorageMode !== undefined) setConfig('default_storage_mode', settings.defaultStorageMode);
+    if (settings.crawlRetentionDays !== undefined) {
+      setConfig('crawl_retention_days', String(settings.crawlRetentionDays));
+      // Apply immediately so the user sees the effect of the setting they just saved.
+      applyCrawlRetention();
+    }
 
     return { success: true };
   } catch (err) {

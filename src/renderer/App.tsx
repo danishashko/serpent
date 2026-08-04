@@ -37,6 +37,8 @@ declare global {
       onLinksUpdated: (cb: (crawlId: string) => void) => void;
       removeAllListeners: (channel: string) => void;
       getCrawls: () => Promise<CrawlRecord[]>;
+      deleteCrawl: (crawlId: string) => Promise<{ success: boolean; error?: string }>;
+      setCrawlLocked: (crawlId: string, locked: boolean) => Promise<{ success: boolean; error?: string }>;
       getPages: (crawlId: string) => Promise<PageData[]>;
       getLinks: (crawlId: string) => Promise<LinkData[]>;
       getImages: (crawlId: string) => Promise<ImageData[]>;

@@ -276,6 +276,9 @@ function createTables(): void {
   // Simhash fingerprint for near-duplicate detection — migration for existing DBs
   try { db.exec('ALTER TABLE pages ADD COLUMN simhash TEXT'); } catch { /* already exists */ }
 
+  // Crawl retention lock — migration for existing DBs
+  try { db.exec('ALTER TABLE crawls ADD COLUMN locked INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+
   // Link crawlability (Google crawlable-link guidance) — migration for existing DBs
   try { db.exec("ALTER TABLE links ADD COLUMN crawlability TEXT NOT NULL DEFAULT 'crawlable'"); } catch { /* already exists */ }
   try { db.exec('ALTER TABLE links ADD COLUMN uncrawlable_reason TEXT'); } catch { /* already exists */ }
@@ -358,20 +361,62 @@ export function updateCrawlStatus(
 const CRAWL_SELECT = `
   SELECT id, mode, start_url as startUrl, start_time as startTime, end_time as endTime,
     status, config_json as configJson, total_urls as totalUrls,
-    completed_urls as completedUrls, total_spend_usd as totalSpendUsd
+    completed_urls as completedUrls, total_spend_usd as totalSpendUsd, locked
   FROM crawls`;
 
+function toCrawlRecord(row: Record<string, unknown>): CrawlRecord {
+  return { ...(row as unknown as CrawlRecord), locked: !!row.locked };
+}
+
 export function getAllCrawls(): CrawlRecord[] {
-  return db.prepare(CRAWL_SELECT + ' ORDER BY start_time DESC').all() as CrawlRecord[];
+  const rows = db.prepare(CRAWL_SELECT + ' ORDER BY start_time DESC').all() as Record<string, unknown>[];
+  return rows.map(toCrawlRecord);
+}
+
+// ----- Crawl retention -----
+
+/** Lock a crawl so the retention policy never deletes it. */
+export function setCrawlLocked(crawlId: string, locked: boolean): void {
+  db.prepare('UPDATE crawls SET locked = ? WHERE id = ?').run(locked ? 1 : 0, crawlId);
+}
+
+/** Delete a crawl and everything hanging off it (pages/links/images cascade). */
+export function deleteCrawl(crawlId: string): void {
+  db.prepare('DELETE FROM crawls WHERE id = ?').run(crawlId);
+}
+
+/**
+ * Delete completed crawls older than `days`, skipping locked ones. Returns the
+ * ids that were removed. A `days` of 0 or less means "never delete" and is a
+ * no-op — retention has to be opted into.
+ */
+export function purgeCrawlsOlderThan(days: number, nowMs: number): string[] {
+  if (!Number.isFinite(days) || days <= 0) return [];
+  const cutoff = new Date(nowMs - days * 24 * 60 * 60 * 1000).toISOString();
+  // Never touch a crawl that is still running or paused — only settled ones.
+  const rows = db.prepare(`
+    SELECT id FROM crawls
+    WHERE locked = 0
+      AND start_time < ?
+      AND status NOT IN ('running', 'paused')
+  `).all(cutoff) as { id: string }[];
+  const purge = db.transaction((ids: string[]) => {
+    const stmt = db.prepare('DELETE FROM crawls WHERE id = ?');
+    for (const id of ids) stmt.run(id);
+  });
+  const ids = rows.map(r => r.id);
+  if (ids.length > 0) purge(ids);
+  return ids;
 }
 
 export function getLatestIncompleteCrawl(): CrawlRecord | undefined {
   // Only treat *intentionally paused* crawls as resumable. A crawl with status='running'
   // at app start means the previous session crashed/was killed — those are marked
   // 'interrupted' by markRunningCrawlsAsInterrupted() during startup and won't appear here.
-  return db.prepare(
+  const row = db.prepare(
     CRAWL_SELECT + " WHERE status IN ('paused', 'interrupted') ORDER BY start_time DESC LIMIT 1"
-  ).get() as CrawlRecord | undefined;
+  ).get() as Record<string, unknown> | undefined;
+  return row ? toCrawlRecord(row) : undefined;
 }
 
 /** Called once on app startup. Any crawl still marked 'running' in the DB belongs to
