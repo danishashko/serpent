@@ -8,6 +8,7 @@ interface Props {
 const defaultSettings: AppSettings = {
   brightDataApiKey: null,
   brightDataZone: 'web_unlocker1',
+  brightDataSerpZone: null,
   brightDataCustomerId: null,
   brightDataBrowserAuth: null,
   maxCostPerCrawl: 5.0,
@@ -216,6 +217,19 @@ export default function Settings({ showToast }: Props): React.ReactElement {
               value={settings.brightDataZone ?? 'web_unlocker1'}
               onChange={e => set('brightDataZone', e.target.value)}
             />
+          </div>
+          <div>
+            <label className="label">SERP Zone Name <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>(required for SERP analysis)</span></label>
+            <input
+              className="input"
+              type="text"
+              placeholder="serp_api1"
+              value={settings.brightDataSerpZone ?? ''}
+              onChange={e => set('brightDataSerpZone', e.target.value)}
+            />
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+              Must be a SERP API zone. The Web Unlocker zone above cannot answer SERP queries.
+            </p>
           </div>
           <div>
             <label className="label">Customer ID <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>(for proxy mode redirect tracking)</span></label>

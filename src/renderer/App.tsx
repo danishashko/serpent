@@ -293,7 +293,10 @@ export default function App(): React.ReactElement {
     try {
       const result = await window.api.serpQuery(activeCrawlId, keywords, location, device);
       if (result.success) {
-        showToast(`SERP queried ${result.total} keywords ($${(result.totalCost ?? 0).toFixed(3)})`, 'success');
+        // A partial failure still returns success, so surface it rather than
+        // letting the count imply every keyword came back.
+        const summary = `SERP queried ${result.total} keywords ($${(result.totalCost ?? 0).toFixed(3)})`;
+        showToast(result.error ? `${summary}. ${result.error}` : summary, result.error ? 'warning' : 'success');
         const updated = await window.api.serpGetResults(activeCrawlId);
         setSerpResults(updated as SerpResultRow[]);
       } else {

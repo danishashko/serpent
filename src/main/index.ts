@@ -788,6 +788,7 @@ ipcMain.handle(IPC.DATA_EXPORT_JSON, async (_event, data: { rows: Record<string,
 ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
   const bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+  const bdSerpZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_serp_zone');
   const bdCustomerId = await keytar.getPassword(KEYTAR_SERVICE, 'bd_customer_id');
   const bdBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
   const openaiApiKey = await keytar.getPassword(KEYTAR_SERVICE, 'openai_api_key');
@@ -799,6 +800,7 @@ ipcMain.handle(IPC.SETTINGS_GET, async () => {
   const settings: AppSettings = {
     brightDataApiKey: apiKey || null,
     brightDataZone: bdZone || 'web_unlocker1',
+    brightDataSerpZone: bdSerpZone || null,
     brightDataCustomerId: bdCustomerId || null,
     brightDataBrowserAuth: bdBrowserAuth || null,
     maxCostPerCrawl: parseFloat(getConfig('max_cost_per_crawl') || '10'),
@@ -834,6 +836,13 @@ ipcMain.handle(IPC.SETTINGS_SAVE, async (_event, settings: Partial<AppSettings>)
     }
     if (settings.brightDataZone !== undefined) {
       await keytar.setPassword(KEYTAR_SERVICE, 'bd_zone', settings.brightDataZone || 'web_unlocker1');
+    }
+    if (settings.brightDataSerpZone !== undefined) {
+      if (settings.brightDataSerpZone) {
+        await keytar.setPassword(KEYTAR_SERVICE, 'bd_serp_zone', settings.brightDataSerpZone);
+      } else {
+        await keytar.deletePassword(KEYTAR_SERVICE, 'bd_serp_zone').catch(() => {});
+      }
     }
     if (settings.brightDataCustomerId !== undefined) {
       if (settings.brightDataCustomerId) {
@@ -1101,14 +1110,32 @@ ipcMain.handle(IPC.AI_GET_ISSUE_RECS, (_event, crawlId: string) => {
 ipcMain.handle(IPC.SERP_QUERY, async (_event, data: { crawlId: string; keywords: string[]; location?: string; device?: 'desktop' | 'mobile' }) => {
   try {
     const apiKey = await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key');
-    const bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
+    // Deliberately not bd_zone: the crawl zone is a Web Unlocker zone, which
+    // this endpoint accepts and then answers without any organic results.
+    const serpZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_serp_zone');
     if (!apiKey) return { success: false, error: 'Bright Data API key not configured' };
+    if (!serpZone) {
+      return { success: false, error: 'No Bright Data SERP zone configured. Add a SERP API zone in Settings — a Web Unlocker zone cannot serve SERP queries.' };
+    }
+    if (!data.keywords?.length) return { success: false, error: 'No keywords provided' };
 
-    const results = await querySerpBatch(data.keywords, apiKey, bdZone || 'serp', data.location, data.device);
-    storeSerpResults(data.crawlId, results);
+    const results = await querySerpBatch(data.keywords, apiKey, serpZone, data.location, data.device);
+    const succeeded = results.filter(r => !r.error);
+    storeSerpResults(data.crawlId, succeeded);
 
-    const totalCost = results.reduce((sum, r) => sum + (r.costUsd || 0), 0);
-    return { success: true, total: results.length, totalCost };
+    const totalCost = succeeded.reduce((sum, r) => sum + (r.costUsd || 0), 0);
+    const firstError = results.find(r => r.error)?.error;
+
+    // Nothing was stored, so reporting success would claim rows that do not exist.
+    if (succeeded.length === 0) {
+      return { success: false, error: firstError || 'All SERP queries failed', total: 0, totalCost: 0 };
+    }
+    return {
+      success: true,
+      total: succeeded.length,
+      totalCost,
+      ...(firstError ? { error: `${results.length - succeeded.length} of ${results.length} queries failed — ${firstError}` } : {}),
+    };
   } catch (err) {
     return { success: false, error: String(err) };
   }

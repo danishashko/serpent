@@ -277,6 +277,8 @@ export interface UsageLog {
 export interface AppSettings {
   brightDataApiKey: string | null;
   brightDataZone: string | null;
+  /** Separate SERP API zone — a Web Unlocker zone cannot serve SERP queries */
+  brightDataSerpZone: string | null;
   /** Bright Data customer ID (e.g. hl_xxx) — required for proxy mode redirect tracking */
   brightDataCustomerId: string | null;
   /** Browser API credentials in "USER:PASS" form (for JS rendering of SPAs) */

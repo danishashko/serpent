@@ -36,6 +36,7 @@ function createTestDb(): Database.Database {
 
 function makeSerpResponse(organic: { rank: number; url: string; title: string; snippet: string }[]) {
   return {
+    status: 200,
     data: {
       organic: organic.map(o => ({
         rank: o.rank,
@@ -76,11 +77,42 @@ describe('serp-client', () => {
       });
     });
 
-    it('returns empty results on API error', async () => {
+    it('reports an error and charges nothing when the request throws', async () => {
       axiosPost.mockRejectedValueOnce(new Error('Network error'));
 
       const result = await querySerpSingle('fail keyword', 'api-key', 'serp_zone');
       expect(result.keyword).toBe('fail keyword');
+      expect(result.results).toEqual([]);
+      expect(result.error).toContain('Network error');
+      expect(result.costUsd).toBe(0);
+    });
+
+    it('reports an error on a non-2xx response', async () => {
+      axiosPost.mockResolvedValueOnce({ status: 403, data: { error: 'zone not found' } } as never);
+
+      const result = await querySerpSingle('kw', 'api-key', 'serp_zone');
+      expect(result.error).toContain('403');
+      expect(result.error).toContain('zone not found');
+      expect(result.results).toEqual([]);
+      expect(result.costUsd).toBe(0);
+    });
+
+    // The bug this guards: a Web Unlocker zone answers 200 with no `organic`
+    // key, which used to be indistinguishable from a keyword ranking nothing.
+    it('reports an error when a 200 response carries no organic array', async () => {
+      axiosPost.mockResolvedValueOnce({ status: 200, data: { html: '<html></html>' } } as never);
+
+      const result = await querySerpSingle('kw', 'api-key', 'web_unlocker1');
+      expect(result.error).toContain('web_unlocker1');
+      expect(result.results).toEqual([]);
+      expect(result.costUsd).toBe(0);
+    });
+
+    it('treats an empty organic array as a real zero-result answer', async () => {
+      axiosPost.mockResolvedValueOnce(makeSerpResponse([]) as never);
+
+      const result = await querySerpSingle('kw with no rankings', 'api-key', 'serp_zone');
+      expect(result.error).toBeUndefined();
       expect(result.results).toEqual([]);
       expect(result.costUsd).toBe(0.003);
     });

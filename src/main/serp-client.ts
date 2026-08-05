@@ -21,6 +21,20 @@ export interface SerpQuery {
   device?: 'desktop' | 'mobile';
   results?: SerpResult[];
   costUsd?: number;
+  /** Set when the query failed. `results` is then empty and nothing was billed. */
+  error?: string;
+}
+
+/**
+ * Pull a human-readable message out of an error response body.
+ */
+function describeBody(data: unknown): string {
+  if (typeof data === 'string' && data.trim()) return `: ${data.trim().slice(0, 200)}`;
+  if (data && typeof data === 'object') {
+    const message = (data as Record<string, unknown>).error ?? (data as Record<string, unknown>).message;
+    if (typeof message === 'string' && message.trim()) return `: ${message.trim().slice(0, 200)}`;
+  }
+  return '';
 }
 
 /**
@@ -33,6 +47,10 @@ export async function querySerpSingle(
   location = 'United States',
   device: 'desktop' | 'mobile' = 'desktop'
 ): Promise<SerpQuery> {
+  // A failed query returns no results and costs nothing, so it must not report
+  // the per-query price either.
+  const failed = (error: string): SerpQuery => ({ keyword, location, device, results: [], costUsd: 0, error });
+
   try {
     const response = await axios.post(
       BD_SERP_ENDPOINT,
@@ -54,19 +72,30 @@ export async function querySerpSingle(
       }
     );
 
-    const results: SerpResult[] = [];
+    if (response.status < 200 || response.status >= 300) {
+      return failed(`Bright Data returned HTTP ${response.status}${describeBody(response.data)}`);
+    }
+
     const data = response.data;
 
-    if (data?.organic && Array.isArray(data.organic)) {
-      for (const item of data.organic) {
-        results.push({
-          position: item.rank || item.position || 0,
-          url: item.url || item.link || '',
-          title: item.title || '',
-          description: item.description || item.snippet || '',
-          features: extractFeatures(data, item),
-        });
-      }
+    // A Web Unlocker zone answers this endpoint but never returns `organic`,
+    // which used to make an unusable zone look exactly like a keyword that
+    // genuinely ranks nothing. Only a present `organic` array is a real answer.
+    if (!data || !Array.isArray(data.organic)) {
+      return failed(
+        `No organic results in the response — zone "${zone}" is probably not a SERP API zone${describeBody(data)}`
+      );
+    }
+
+    const results: SerpResult[] = [];
+    for (const item of data.organic) {
+      results.push({
+        position: item.rank || item.position || 0,
+        url: item.url || item.link || '',
+        title: item.title || '',
+        description: item.description || item.snippet || '',
+        features: extractFeatures(data, item),
+      });
     }
 
     return {
@@ -76,8 +105,8 @@ export async function querySerpSingle(
       results,
       costUsd: COST_PER_QUERY_USD,
     };
-  } catch {
-    return { keyword, location, device, results: [], costUsd: COST_PER_QUERY_USD };
+  } catch (err) {
+    return failed(err instanceof Error ? err.message : String(err));
   }
 }
 
