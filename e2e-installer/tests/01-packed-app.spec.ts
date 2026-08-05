@@ -66,6 +66,16 @@ test('packed app launches and renders the Serpent shell', async () => {
     expect(apiKeys).toContain('crawlStart');
     expect(apiKeys).toContain('getSettings');
 
+    // better-sqlite3 is already proven by the window existing at all (a failed
+    // initDatabase quits before any window opens). keytar is not — nothing so
+    // far has loaded it, and only a real call proves its ABI matches. This
+    // reads secrets and never writes, so it cannot disturb stored credentials.
+    const settings = await win.evaluate(async () => {
+      // @ts-expect-error: api is injected by preload
+      return await window.api.getSettings();
+    });
+    expect(settings).toHaveProperty('brightDataZone');
+
     // Quick UI sanity — main toolbar buttons are present.
     await expect(win.getByRole('button', { name: /Crawl/ }).first()).toBeVisible();
     await expect(win.getByRole('button', { name: /Settings/ }).first()).toBeVisible();
