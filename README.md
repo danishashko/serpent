@@ -223,7 +223,7 @@ flowchart LR
 
 | Feature | Serpent | Typical Crawler |
 |---------|:-------:|:--------------:|
-| Price | **Free / Open Source** | £199/yr |
+| Price | **Free / Open Source** | Paid annual license |
 | URL limit (free tier) | **Unlimited** | 500 |
 | AI analysis | ✅ Multi-LLM (5 providers) | ❌ |
 | AI issue recommendations + auto-fixes | ✅ | ❌ |
