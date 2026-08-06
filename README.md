@@ -224,7 +224,7 @@ flowchart LR
 | Feature | Serpent | Typical Crawler |
 |---------|:-------:|:--------------:|
 | Price | **Free / Open Source** | Paid annual license |
-| URL limit (free tier) | **Unlimited** | 500 |
+| URL limit (free tier) | **Unlimited** | Capped |
 | AI analysis | ✅ Multi-LLM (5 providers) | ❌ |
 | AI issue recommendations + auto-fixes | ✅ | ❌ |
 | Issue severity scoring | ✅ | ✅ |
@@ -242,7 +242,7 @@ flowchart LR
 | Semantic similarity (embeddings) | ✅ Gemini / OpenAI / local Ollama | ✅ |
 | Semantic search over a crawl | ✅ | ✅ |
 | Uncrawlable link detection | ✅ | ✅ |
-| JS rendering | ✅ Chromium built-in | ✅ (Chrome required) |
+| JS rendering | ✅ Chromium built-in | ✅ (external browser) |
 | Bot-protection bypass | ✅ Bright Data | ❌ |
 | SERP analysis | ✅ Bright Data | ❌ |
 | Cost monitoring | ✅ Real-time | N/A |
