@@ -33,11 +33,14 @@ jobs:
       - name: Build app
         run: npm run build
 
+      # --publish never, and no GH_TOKEN: with a token in scope electron-builder
+      # creates its own GitHub release first, which the release step below then
+      # reuses instead of its own draft. That left the release body empty and
+      # uploaded the installer twice under two different names.
       - name: Build installer (unsigned)
-        run: npx electron-builder --win --config.win.signAndEditExecutable=false
+        run: npx electron-builder --win --publish never --config.win.signAndEditExecutable=false
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ──────────────────────────────────────────────
       # SignPath Code Signing (enable after approval)

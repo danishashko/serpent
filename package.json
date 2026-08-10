@@ -95,7 +95,8 @@
       "license": "LICENSE",
       "installerIcon": "resources/icon.ico",
       "uninstallerIcon": "resources/icon.ico",
-      "installerHeaderIcon": "resources/icon.ico"
+      "installerHeaderIcon": "resources/icon.ico",
+      "artifactName": "Serpent-Setup-${version}.${ext}"
     },
     "mac": {
       "target": "dmg",
