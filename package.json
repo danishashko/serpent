@@ -1,6 +1,6 @@
 {
   "name": "serpent",
-  "version": "1.0.8",
+  "version": "1.0.0",
   "description": "AI-native local SEO spider — a free, open-source technical SEO crawler",
   "main": "dist/main/index.js",
   "scripts": {
