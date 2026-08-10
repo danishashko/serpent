@@ -105,7 +105,15 @@ jobs:
             )
           }
 
-          $notes += 'Releases are not code-signed yet, so Windows SmartScreen may warn on first run: **More info -> Run anyway**.'
+          # SignPath requires the literal term "Code signing policy" on the
+          # download/release pages as well as the project home page.
+          $notes += '## Code signing policy'
+          $notes += ''
+          $notes += 'Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).'
+          $notes += ''
+          $notes += 'Team roles and the full policy: [project README](https://github.com/${{ github.repository }}#code-signing-policy).'
+          $notes += ''
+          $notes += 'The SignPath Foundation application is pending, so this release is unsigned and Windows SmartScreen may warn on first run: **More info -> Run anyway**.'
           $notes += ''
           $notes | Set-Content release/RELEASE_NOTES.md -Encoding utf8
 

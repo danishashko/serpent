@@ -374,6 +374,34 @@ Contributions are welcome! Please open an issue first to discuss substantial cha
 
 ---
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+**Team roles**
+
+| Role | Members |
+|------|---------|
+| Authors (commit without additional review) | [@danishashko](https://github.com/danishashko) |
+| Reviewers (review all external pull requests) | [@danishashko](https://github.com/danishashko) |
+| Approvers (approve each signing request) | [@danishashko](https://github.com/danishashko) |
+
+Serpent is currently a single-maintainer project, so all three roles are held by the
+same person. Every pull request from an outside contributor is reviewed before merge,
+and every release is approved for signing individually.
+
+**Privacy:** see the [Privacy Policy](PRIVACY_POLICY.md). Serpent will not transfer any
+information to other networked systems unless specifically requested by the user or the
+person installing or operating it. Optional integrations that do reach the network
+(Bright Data, Google Search Console, and the OpenAI / Anthropic / Google / OpenRouter AI
+providers) are off by default, require you to supply your own API key, and are listed
+with their destinations in the Privacy Policy.
+
+> **Status:** the SignPath Foundation application is pending. Until it is approved,
+> release binaries are unsigned and Windows SmartScreen will warn on first run.
+
+---
+
 ## Author
 
 **Daniel Shashko** — GTM Strategy × AI Automations
