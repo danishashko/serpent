@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore, UncrawlableReason, UNCRAWLABLE_REASON_LABELS } from '../../types/index';
 import CrawlComparison from './CrawlComparison';
 import SiteMap from './SiteMap';
@@ -160,10 +160,10 @@ const issueSeverity = (filter: IssueFilter): IssueSeverity => {
 
 const severityColor = (severity: IssueSeverity): string => {
   switch (severity) {
-    case 'critical': return '#ef4444';
-    case 'warning': return '#f59e0b';
-    case 'info': return '#3b82f6';
-    case 'opportunity': return '#22c55e';
+    case 'critical': return 'var(--accent-red)';
+    case 'warning': return 'var(--accent-orange)';
+    case 'info': return 'var(--accent-blue)';
+    case 'opportunity': return 'var(--accent-green)';
   }
 };
 
@@ -174,6 +174,8 @@ const MAX_RENDER_ROWS = 1000;
 
 export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, geoScores, perfScores, crawlId, showToast, onSerpQuery, serpLoading, onGeoScoresUpdate, onPerfScoresUpdate, discoverResults, contentGaps, onDiscoverResultsUpdate, onContentGapsUpdate }: Props): React.ReactElement {
   const [tab, setTab] = useState<Tab>('pages');
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [tabFade, setTabFade] = useState({ l: false, r: false });
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<string>('url');
@@ -203,6 +205,21 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   useEffect(() => {
     window.api.onPsiProgress?.(data => setPsiProgress(data));
     return () => window.api.removeAllListeners('psi:progress');
+  }, []);
+
+  // Track which sides of the tab strip still have tabs off-screen.
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const update = () => setTabFade({
+      l: el.scrollLeft > 1,
+      r: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', update); ro.disconnect(); };
   }, []);
   const [reportGenerating, setReportGenerating] = useState(false);
   const reportTitle = 'SEO Audit Report';
@@ -603,9 +620,59 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
 
   const tabs: Tab[] = ['pages', 'links', 'images', 'issues_v2', 'issues', 'sitemap', 'semantic', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf', 'competitors', 'content_gaps'];
 
+  // Label and count are separate so the count can be de-emphasised and the
+  // label can stay on one line — the old single string wrapped to 3 rows.
+  const TAB_META: Record<Tab, { label: string; count?: number }> = {
+    pages: { label: 'Pages', count: pages.length },
+    links: { label: 'Links', count: links.length },
+    images: { label: 'Images', count: images.length },
+    issues_v2: { label: 'Issues' },
+    issues: { label: 'Issue list', count: totalIssueCount },
+    sitemap: { label: 'Sitemap' },
+    semantic: { label: 'Semantic' },
+    redirects: { label: 'Redirects', count: redirects.length },
+    hreflang: { label: 'Hreflang', count: hreflang.length },
+    duplicates: { label: 'Duplicates', count: duplicates.length },
+    extractions: { label: 'Extractions', count: customExtracts.length },
+    serp: { label: 'SERP', count: serpResults.length },
+    map: { label: 'Map', count: pages.length },
+    geo: { label: 'GEO', count: geoScores.length },
+    perf: { label: 'Perf', count: perfScores.length },
+    competitors: { label: 'Competitors', count: discoverResults.length },
+    content_gaps: { label: 'Gaps', count: contentGaps.length },
+  };
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Tab bar + search */}
+      {/* Row 1 — tabs. Scrolls horizontally; 17 of them will not fit at any
+          sane window width, and sharing a row with the toolbar pushed the
+          export buttons off-screen entirely. */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'stretch',
+        padding: '0 12px',
+        borderBottom: '1px solid var(--border)',
+        flexShrink: 0,
+      }}>
+        <div ref={stripRef} className={`tab-strip${tabFade.l ? ' fade-l' : ''}${tabFade.r ? ' fade-r' : ''}`} role="tablist">
+          {tabs.map(t => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={tab === t}
+              className={`tab${tab === t ? ' active' : ''}`}
+              onClick={() => setTab(t)}
+            >
+              {TAB_META[t].label}
+              {TAB_META[t].count !== undefined && (
+                <span className="tab-count">{TAB_META[t].count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Row 2 — filter + actions */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -614,48 +681,14 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         borderBottom: '1px solid var(--border)',
         flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {tabs.map(t => (
-            <button
-              key={t}
-              className="btn-icon"
-              onClick={() => setTab(t)}
-              style={{
-                fontWeight: tab === t ? 600 : 400,
-                color: tab === t ? 'var(--text-primary)' : undefined,
-                borderBottom: tab === t ? '2px solid var(--accent-blue)' : '2px solid transparent',
-                borderRadius: 0,
-                paddingBottom: 4,
-              }}
-            >
-              {t === 'pages' && `Pages (${pages.length})`}
-              {t === 'links' && `Links (${links.length})`}
-              {t === 'images' && `Images (${images.length})`}
-              {t === 'issues_v2' && 'Issues'}
-              {t === 'sitemap' && 'Sitemap'}
-              {t === 'semantic' && 'Semantic'}
-              {t === 'issues' && `Issues List (${totalIssueCount})`}
-              {t === 'redirects' && `Redirects (${redirects.length})`}
-              {t === 'hreflang' && `Hreflang (${hreflang.length})`}
-              {t === 'duplicates' && `Duplicates (${duplicates.length})`}
-              {t === 'extractions' && `Extractions (${customExtracts.length})`}
-              {t === 'serp' && `SERP (${serpResults.length})`}
-              {t === 'map' && `Map (${pages.length})`}
-              {t === 'geo' && `GEO (${geoScores.length})`}
-              {t === 'perf' && `Perf (${perfScores.length})`}
-              {t === 'competitors' && `Competitors (${discoverResults.length})`}
-              {t === 'content_gaps' && `Gaps (${contentGaps.length})`}
-            </button>
-          ))}
-        </div>
-        <div style={{ flex: 1 }} />
         <input
           className="input"
-          style={{ width: 200, padding: '3px 8px', fontSize: 12 }}
+          style={{ width: 220, padding: '3px 8px', fontSize: 12, flexShrink: 0 }}
           placeholder="Filter…"
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
+        <div style={{ flex: 1 }} />
         {crawlId && (
           <div style={{ display: 'flex', gap: 4 }}>
             <div style={{ position: 'relative' }}>
@@ -665,7 +698,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 setShowCrawlPicker(p => !p);
               }}>⇄ Compare</button>
               {showCrawlPicker && compareCrawls.length > 0 && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 50, background: 'var(--bg-secondary, #1a1d2e)', border: '1px solid var(--border)', borderRadius: 6, padding: 4, minWidth: 250, maxHeight: 200, overflowY: 'auto' }}>
+                <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 50, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, padding: 4, minWidth: 250, maxHeight: 200, overflowY: 'auto' }}>
                   {compareCrawls.map(c => (
                     <button key={c.id} className="btn-ghost" style={{ display: 'block', width: '100%', textAlign: 'left', fontSize: 11, padding: '4px 8px' }} onClick={async () => {
                       setShowCrawlPicker(false);
@@ -734,7 +767,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 fontSize: 11,
                 borderRadius: 12,
                 border: '1px solid ' + (issueFilter === f ? 'var(--accent-blue)' : 'var(--border)'),
-                background: issueFilter === f ? 'rgba(76,133,255,0.15)' : 'transparent',
+                background: issueFilter === f ? 'var(--tint-blue)' : 'transparent',
                 color: issueFilter === f ? 'var(--accent-blue)' : 'var(--text-secondary)',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
@@ -767,8 +800,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           {issueRecs[issueFilter] ? (
             <div style={{
-              background: 'rgba(76,133,255,0.06)',
-              border: '1px solid rgba(76,133,255,0.2)',
+              background: 'var(--tint-blue)',
+              border: '1px solid var(--accent-blue)',
               borderRadius: 8,
               padding: '10px 14px',
             }}>
@@ -854,7 +887,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {filteredPages.length === 0 ? (
-                <tr><td colSpan={22} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
+                <tr><td colSpan={22} className="table-empty">
                   {pages.length === 0 ? 'Start a crawl to see results' : 'No results match filter'}
                 </td></tr>
               ) : filteredPages.slice(0, MAX_RENDER_ROWS).map(p => {
@@ -952,7 +985,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 </tr>
                 {isExpanded && inlinks.length > 0 && (
                   <tr>
-                    <td colSpan={22} style={{ padding: 0, background: 'var(--bg-secondary, rgba(0,0,0,0.05))' }}>
+                    <td colSpan={22} style={{ padding: 0, background: 'var(--bg-secondary)' }}>
                       <div style={{ padding: '8px 16px 8px 32px', maxHeight: 200, overflowY: 'auto' }}>
                         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600 }}>
                           Inlinks to {p.url} ({inlinks.length})
@@ -986,7 +1019,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               })}
               {filteredPages.length > MAX_RENDER_ROWS && (
                 <tr>
-                  <td colSpan={22} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary, rgba(0,0,0,0.04))' }}>
+                  <td colSpan={22} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary)' }}>
                     Showing first {MAX_RENDER_ROWS.toLocaleString()} of {filteredPages.length.toLocaleString()} rows. Use search to narrow, or Export to get the full dataset.
                   </td>
                 </tr>
@@ -1024,7 +1057,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {links.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No links collected yet</td></tr>
+                <tr><td colSpan={7} className="table-empty">No links collected yet</td></tr>
               ) : (() => {
                 const filteredLinks = links.filter(l => !search || l.sourceUrl.toLowerCase().includes(search.toLowerCase()) || l.targetUrl.toLowerCase().includes(search.toLowerCase()));
                 const capped = filteredLinks.slice(0, MAX_RENDER_ROWS);
@@ -1042,7 +1075,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                       fontSize: 10,
                       padding: '2px 6px',
                       borderRadius: 4,
-                      background: !l.isInternal ? 'rgba(255,140,50,0.15)' : 'rgba(76,133,255,0.15)',
+                      background: !l.isInternal ? 'var(--tint-orange)' : 'var(--tint-blue)',
                       color: !l.isInternal ? 'var(--accent-orange)' : 'var(--accent-blue)',
                     }}>
                       {!l.isInternal ? 'External' : 'Internal'}
@@ -1055,7 +1088,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                         style={{
                           padding: '2px 6px',
                           borderRadius: 4,
-                          background: 'rgba(255,140,50,0.15)',
+                          background: 'var(--tint-orange)',
                           color: 'var(--accent-orange)',
                           fontWeight: 600,
                         }}
@@ -1072,7 +1105,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                       <span style={{
                         padding: '2px 6px',
                         borderRadius: 4,
-                        background: 'rgba(0,0,0,0.12)',
+                        background: 'var(--tint-gray)',
                         color: statusColor(l.statusCode),
                         fontWeight: 600,
                       }}>{l.statusCode}</span>
@@ -1082,7 +1115,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   </td>
                 </tr>
               ))}{filteredLinks.length > MAX_RENDER_ROWS && (
-                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary, rgba(0,0,0,0.04))' }}>
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary)' }}>
                   Showing first {MAX_RENDER_ROWS.toLocaleString()} of {filteredLinks.length.toLocaleString()} rows. Use search to narrow, or Export to get the full dataset.
                 </td></tr>
               )}</>);
@@ -1106,7 +1139,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {images.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No images collected yet</td></tr>
+                <tr><td colSpan={7} className="table-empty">No images collected yet</td></tr>
               ) : (() => {
                 const filteredImages = images.filter(img => !search || img.imageUrl.toLowerCase().includes(search.toLowerCase()));
                 const capped = filteredImages.slice(0, MAX_RENDER_ROWS);
@@ -1127,7 +1160,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   </td>
                 </tr>
               ))}{filteredImages.length > MAX_RENDER_ROWS && (
-                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary, rgba(0,0,0,0.04))' }}>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary)' }}>
                   Showing first {MAX_RENDER_ROWS.toLocaleString()} of {filteredImages.length.toLocaleString()} rows. Use search to narrow, or Export to get the full dataset.
                 </td></tr>
               )}</>);
@@ -1149,7 +1182,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {redirects.length === 0 ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No redirect chains detected</td></tr>
+                <tr><td colSpan={5} className="table-empty">No redirect chains detected</td></tr>
               ) : redirects
                 .filter(r => !search || r.sourceUrl.toLowerCase().includes(search.toLowerCase()) || r.targetUrl.toLowerCase().includes(search.toLowerCase()))
                 .map((r, i) => (
@@ -1182,7 +1215,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {hreflang.length === 0 ? (
-                <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No hreflang tags found</td></tr>
+                <tr><td colSpan={3} className="table-empty">No hreflang tags found</td></tr>
               ) : hreflang
                 .filter(h => !search || h.pageUrl.toLowerCase().includes(search.toLowerCase()) || h.hreflang.toLowerCase().includes(search.toLowerCase()))
                 .map((h, i) => (
@@ -1211,7 +1244,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {duplicates.length === 0 ? (
-                <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No duplicate content detected</td></tr>
+                <tr><td colSpan={3} className="table-empty">No duplicate content detected</td></tr>
               ) : duplicates
                 .filter(d => !search || d.urls.some(u => u.toLowerCase().includes(search.toLowerCase())) || d.contentHash.toLowerCase().includes(search.toLowerCase()))
                 .map((d, i) => (
@@ -1243,7 +1276,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {customExtracts.length === 0 ? (
-                <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No custom extractions configured</td></tr>
+                <tr><td colSpan={4} className="table-empty">No custom extractions configured</td></tr>
               ) : customExtracts
                 .filter(e => !search || e.pageUrl.toLowerCase().includes(search.toLowerCase()) || e.ruleName.toLowerCase().includes(search.toLowerCase()))
                 .map((e, i) => (
@@ -1329,7 +1362,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 </thead>
                 <tbody>
                   {geoScores.length === 0 ? (
-                    <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>Click "Run GEO/AEO Analysis" to score pages</td></tr>
+                    <tr><td colSpan={7} className="table-empty">Click "Run GEO/AEO Analysis" to score pages</td></tr>
                   ) : [...geoScores].sort((a, b) => a.overallScore - b.overallScore).map(g => (
                     <tr key={g.pageId}>
                       <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1414,7 +1447,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 </thead>
                 <tbody>
                   {perfScores.length === 0 ? (
-                    <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>Click "Run Performance Analysis" to score pages</td></tr>
+                    <tr><td colSpan={9} className="table-empty">Click "Run Performance Analysis" to score pages</td></tr>
                   ) : [...perfScores].sort((a, b) => a.overallScore - b.overallScore).map(p => (
                     <tr key={p.pageId}>
                       <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1595,7 +1628,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 </thead>
                 <tbody>
                   {serpResults.length === 0 ? (
-                    <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
+                    <tr><td colSpan={7} className="table-empty">
                       {crawlId ? 'Enter keywords above to query SERP rankings' : 'Start a crawl first to use SERP queries'}
                     </td></tr>
                   ) : serpResults
@@ -1696,7 +1729,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 </thead>
                 <tbody>
                   {discoverResults.length === 0 ? (
-                    <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>Enter your domain and target keywords above to discover competitors</td></tr>
+                    <tr><td colSpan={5} className="table-empty">Enter your domain and target keywords above to discover competitors</td></tr>
                   ) : [...discoverResults].sort((a, b) => b.relevanceScore - a.relevanceScore).map((r, i) => (
                     <tr key={i}>
                       <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1789,7 +1822,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 </thead>
                 <tbody>
                   {contentGaps.length === 0 ? (
-                    <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>Enter topics above to analyze content gaps against competitors</td></tr>
+                    <tr><td colSpan={7} className="table-empty">Enter topics above to analyze content gaps against competitors</td></tr>
                   ) : [...contentGaps].sort((a, b) => {
                     const order = { high: 0, medium: 1, low: 2, none: 3 };
                     return (order[a.gapSeverity] ?? 4) - (order[b.gapSeverity] ?? 4);
@@ -1797,11 +1830,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                     <tr key={i}>
                       <td style={{ fontWeight: 500 }}>{g.topic}</td>
                       <td>
-                        <span style={{
-                          display: 'inline-block', padding: '2px 8px', borderRadius: 9999, fontSize: 11, fontWeight: 600,
-                          background: g.gapSeverity === 'high' ? 'var(--accent-red)' : g.gapSeverity === 'medium' ? 'var(--accent-orange)' : g.gapSeverity === 'low' ? 'var(--accent-blue)' : 'var(--accent-green)',
-                          color: '#fff',
-                        }}>
+                        <span className={`badge ${g.gapSeverity === 'high' ? 'badge-red' : g.gapSeverity === 'medium' ? 'badge-orange' : g.gapSeverity === 'low' ? 'badge-blue' : 'badge-green'}`}>
                           {g.gapSeverity}
                         </span>
                       </td>

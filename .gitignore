@@ -15,6 +15,18 @@ playwright-report/
 test-results/
 e2e/.tmp/
 
+# Ad-hoc QA harnesses + their screenshots. These live at the repo root only so
+# node_modules resolves when running them directly; they are not part of the suite.
+qa-shots/
+live-qa.js
+live-qa-edge.js
+qa-full.js
+resume-qa.js
+runbatch.js
+scall.js
+ui-feature-qa.js
+visual-qa.js
+
 # Planning / research docs (not part of the open-source repo)
 BUSINESS_MODEL.md
 FEATURE-PROPOSALS*.md

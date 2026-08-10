@@ -1,5 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AppSettings, AIProvider, CrawlSchedule, CrawlRecord, ScheduleDiffSummary } from '../../types/index';
+import { applyTheme, getThemePref, type ThemePref } from '../lib/theme';
+
+const SETTINGS_SECTIONS: { id: string; label: string }[] = [
+  { id: 'appearance', label: '🎨 Appearance' },
+  { id: 'bright-data', label: '☁️ Bright Data' },
+  { id: 'browser-api', label: '🌐 Browser API' },
+  { id: 'ai-provider', label: '🤖 AI provider' },
+  { id: 'pagespeed', label: '📈 PageSpeed' },
+  { id: 'schedules', label: '🕑 Scheduled crawls' },
+  { id: 'saved-crawls', label: '🗄️ Saved crawls' },
+];
 
 interface Props {
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
@@ -52,6 +63,9 @@ export default function Settings({ showToast }: Props): React.ReactElement {
   const [showBdKey, setShowBdKey] = useState(false);
   const [showBdBrowserAuth, setShowBdBrowserAuth] = useState(false);
   const [showAiKey, setShowAiKey] = useState(false);
+  const [themePref, setThemePref] = useState<ThemePref>(getThemePref);
+  const [activeSection, setActiveSection] = useState<string>(SETTINGS_SECTIONS[0].id);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -65,6 +79,29 @@ export default function Settings({ showToast }: Props): React.ReactElement {
       }
     })();
   }, []);
+
+  // Highlight the rail entry for whichever section is nearest the top of the
+  // scroll area. Runs only once the form is rendered — the loading branch
+  // returns before any section exists.
+  useEffect(() => {
+    if (loading) return;
+    const root = scrollRef.current;
+    if (!root) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        const visible = entries
+          .filter(e => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (visible?.target.id) setActiveSection(visible.target.id);
+      },
+      { root, rootMargin: '0px 0px -70% 0px', threshold: 0 },
+    );
+    for (const s of SETTINGS_SECTIONS) {
+      const el = document.getElementById(s.id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, [loading]);
 
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
     setSettings(s => ({ ...s, [key]: value }));
@@ -182,11 +219,53 @@ export default function Settings({ showToast }: Props): React.ReactElement {
   const isCloudProvider = selectedProvider !== 'ollama';
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 24, maxWidth: 600 }}>
+    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      {/* Section rail — the settings column is long enough that scrolling
+          blind was the only way to find anything. */}
+      <nav className="settings-nav">
+        {SETTINGS_SECTIONS.map(s => (
+          <button
+            key={s.id}
+            className={activeSection === s.id ? 'active' : ''}
+            onClick={() => {
+              setActiveSection(s.id);
+              document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </nav>
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
+          <div style={{ maxWidth: 680, margin: '0 auto' }}>
       <h2 style={{ marginBottom: 24, fontSize: 16, fontWeight: 700 }}>Settings</h2>
 
+      {/* Appearance */}
+      <section id="appearance" style={{ marginBottom: 28 }}>
+        <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14 }}>
+          🎨 Appearance
+        </h3>
+        <label className="label">Theme</label>
+        <div className="toggle" style={{ maxWidth: 300 }}>
+          {(['system', 'light', 'dark'] as ThemePref[]).map(p => (
+            <div
+              key={p}
+              className={`toggle-option${themePref === p ? ' active' : ''}`}
+              onClick={() => { applyTheme(p); setThemePref(p); }}
+            >
+              {p === 'system' ? 'System' : p === 'light' ? 'Light' : 'Dark'}
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
+          Stored locally on this machine, separate from the credentials below.
+        </p>
+      </section>
+
       {/* Bright Data section */}
-      <section style={{ marginBottom: 28 }}>
+      <section id="bright-data" style={{ marginBottom: 28 }}>
         <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
           ☁️ Bright Data Web Unlocker
           {statusBadge(bdStatus)}
@@ -267,7 +346,7 @@ export default function Settings({ showToast }: Props): React.ReactElement {
       </section>
 
       {/* Bright Data Browser API section */}
-      <section style={{ marginBottom: 28 }}>
+      <section id="browser-api" style={{ marginBottom: 28 }}>
         <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
           🌐 Bright Data Browser API (JS rendering)
           {statusBadge(bdBrowserStatus)}
@@ -304,7 +383,7 @@ export default function Settings({ showToast }: Props): React.ReactElement {
       </section>
 
       {/* AI Provider section */}
-      <section style={{ marginBottom: 28 }}>
+      <section id="ai-provider" style={{ marginBottom: 28 }}>
         <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
           🤖 AI Analysis Provider
           {statusBadge(aiStatus)}
@@ -429,7 +508,7 @@ export default function Settings({ showToast }: Props): React.ReactElement {
       </section>
 
       {/* PageSpeed Insights */}
-      <section style={{ marginBottom: 28 }}>
+      <section id="pagespeed" style={{ marginBottom: 28 }}>
         <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14 }}>
           📈 PageSpeed Insights (Core Web Vitals)
         </h3>
@@ -460,14 +539,21 @@ export default function Settings({ showToast }: Props): React.ReactElement {
         onRetentionChange={days => set('crawlRetentionDays', days)}
       />
 
-      <button
-        className="btn-primary"
-        onClick={handleSave}
-        disabled={saving}
-        style={{ minWidth: 120 }}
-      >
-        {saving ? <><span className="spinner" /> Saving…</> : '💾 Save Settings'}
-      </button>
+          </div>
+        </div>
+
+        {/* Pinned — Save was previously stranded below ~1600px of scroll */}
+        <div className="panel-footer" style={{ justifyContent: 'flex-end' }}>
+          <button
+            className="btn-primary"
+            onClick={handleSave}
+            disabled={saving}
+            style={{ minWidth: 140 }}
+          >
+            {saving ? <><span className="spinner" /> Saving…</> : '💾 Save Settings'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -533,7 +619,7 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
   };
 
   return (
-    <section data-testid="schedules-section" style={{ marginBottom: 28 }}>
+    <section id="schedules" data-testid="schedules-section" style={{ marginBottom: 28 }}>
       <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14 }}>
         🕑 Scheduled Crawls
       </h3>
@@ -561,7 +647,7 @@ function ScheduledCrawlsSection({ showToast }: Props): React.ReactElement {
                   {s.autoCompare && (
                     <span
                       title="Each run is diffed against the previous crawl from this schedule"
-                      style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', borderRadius: 4, background: 'rgba(76,133,255,0.15)', color: 'var(--accent-blue)', fontWeight: 600 }}
+                      style={{ marginLeft: 6, fontSize: 9, padding: '1px 5px', borderRadius: 4, background: 'var(--tint-blue)', color: 'var(--accent-blue)', fontWeight: 600 }}
                     >AUTO-COMPARE</span>
                   )}
                 </div>
@@ -681,7 +767,7 @@ function CrawlRetentionSection({ showToast, retentionDays, onRetentionChange }: 
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString();
 
   return (
-    <section data-testid="retention-section" style={{ marginBottom: 28 }}>
+    <section id="saved-crawls" data-testid="retention-section" style={{ marginBottom: 28 }}>
       <h3 style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: 14 }}>
         🗄️ Saved Crawls
       </h3>

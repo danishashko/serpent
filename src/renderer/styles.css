@@ -1,12 +1,15 @@
-/* Serpent — Dark theme */
+/* Serpent — theme tokens. Dark is the default; [data-theme] on <html> switches. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-:root {
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
   --bg-primary: #0f1117;
   --bg-secondary: #1a1d27;
   --bg-tertiary: #242736;
   --bg-hover: #2e3245;
   --border: #2e3245;
+  --border-subtle: rgba(46, 50, 69, 0.5);
   --border-focus: #4c85ff;
   --text-primary: #e8eaf0;
   --text-secondary: #8b93a8;
@@ -17,12 +20,70 @@
   --accent-orange: #ffa502;
   --accent-purple: #a29bfe;
   --accent-teal: #00cec9;
+  /* Readable foreground when sitting ON a filled accent block */
+  --on-accent-blue: #fff;
+  --on-accent-green: #06140c;
+  --on-accent-red: #fff;
+  --on-accent-orange: #1a1200;
+  /* Soft accent washes (badges, selected rows, banners) */
+  --tint-blue: rgba(76, 133, 255, 0.15);
+  --tint-green: rgba(46, 213, 115, 0.15);
+  --tint-red: rgba(255, 71, 87, 0.15);
+  --tint-orange: rgba(255, 165, 2, 0.15);
+  --tint-gray: rgba(139, 147, 168, 0.12);
+  --tint-selected: rgba(76, 133, 255, 0.1);
+  /* Site map treemap — muted so 500 cells don't read as a colour wall */
+  --map-ok: #2f6f4e;
+  --map-warn: #8a6320;
+  --map-alert: #8a4a20;
+  --map-bad: #8a2f33;
+  --map-group: #3a3f52;
+  --map-stroke: #0f1117;
+  --map-label: #e8eaf0;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
   --radius: 6px;
   --radius-lg: 10px;
   --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
   --title-bar-height: 32px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f6f8;
+  --bg-tertiary: #eceef2;
+  --bg-hover: #e3e6ec;
+  --border: #dde1e8;
+  --border-subtle: rgba(221, 225, 232, 0.9);
+  --border-focus: #2563eb;
+  --text-primary: #14161c;
+  --text-secondary: #5b6474;
+  --text-muted: #8a92a2;
+  --accent-blue: #2563eb;
+  --accent-green: #17803d;
+  --accent-red: #d32030;
+  --accent-orange: #b45309;
+  --accent-purple: #6d28d9;
+  --accent-teal: #0e7490;
+  --on-accent-blue: #fff;
+  --on-accent-green: #fff;
+  --on-accent-red: #fff;
+  --on-accent-orange: #fff;
+  --tint-blue: rgba(37, 99, 235, 0.1);
+  --tint-green: rgba(23, 128, 61, 0.12);
+  --tint-red: rgba(211, 32, 48, 0.1);
+  --tint-orange: rgba(180, 83, 9, 0.12);
+  --tint-gray: rgba(91, 100, 116, 0.1);
+  --tint-selected: rgba(37, 99, 235, 0.09);
+  --map-ok: #86c9a3;
+  --map-warn: #e6c169;
+  --map-alert: #e9a273;
+  --map-bad: #e58a92;
+  --map-group: #cdd3de;
+  --map-stroke: #ffffff;
+  --map-label: #14161c;
+  --shadow: 0 4px 20px rgba(20, 22, 28, 0.12);
 }
 
 html, body, #root {
@@ -57,21 +118,21 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .btn-primary {
   background: var(--accent-blue);
-  color: #fff;
+  color: var(--on-accent-blue);
   font-weight: 600;
 }
 .btn-primary:hover:not(:disabled) { filter: brightness(1.15); }
 
 .btn-success {
   background: var(--accent-green);
-  color: #000;
+  color: var(--on-accent-green);
   font-weight: 600;
 }
 .btn-success:hover:not(:disabled) { filter: brightness(1.1); }
 
 .btn-danger {
   background: var(--accent-red);
-  color: #fff;
+  color: var(--on-accent-red);
   font-weight: 600;
 }
 .btn-danger:hover:not(:disabled) { filter: brightness(1.1); }
@@ -136,11 +197,11 @@ label { color: var(--text-secondary); font-size: 12px; display: block; margin-bo
   font-size: 11px;
   font-weight: 600;
 }
-.badge-green { background: rgba(46,213,115,0.15); color: var(--accent-green); }
-.badge-red { background: rgba(255,71,87,0.15); color: var(--accent-red); }
-.badge-orange { background: rgba(255,165,2,0.15); color: var(--accent-orange); }
-.badge-blue { background: rgba(76,133,255,0.15); color: var(--accent-blue); }
-.badge-gray { background: rgba(139,147,168,0.12); color: var(--text-secondary); }
+.badge-green { background: var(--tint-green); color: var(--accent-green); }
+.badge-red { background: var(--tint-red); color: var(--accent-red); }
+.badge-orange { background: var(--tint-orange); color: var(--accent-orange); }
+.badge-blue { background: var(--tint-blue); color: var(--accent-blue); }
+.badge-gray { background: var(--tint-gray); color: var(--text-secondary); }
 
 /* Status code colors */
 .status-2xx { color: var(--accent-green); }
@@ -173,14 +234,24 @@ label { color: var(--text-secondary); font-size: 12px; display: block; margin-bo
 .data-table th:hover { background: var(--bg-hover); cursor: pointer; }
 .data-table td {
   padding: 6px 10px;
-  border-bottom: 1px solid rgba(46,50,69,0.5);
+  border-bottom: 1px solid var(--border-subtle);
   max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* "Nothing here yet" row — needs room to breathe, and must not inherit the
+   nowrap/ellipsis truncation the data cells use. */
+.data-table td.table-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 56px 24px;
+  max-width: none;
+  white-space: normal;
+}
+.data-table tr:hover td.table-empty { background: transparent; }
 .data-table tr:hover td { background: var(--bg-hover); }
-.data-table tr.selected td { background: rgba(76,133,255,0.1); }
+.data-table tr.selected td { background: var(--tint-selected); }
 
 /* Toasts */
 .toast {
@@ -195,10 +266,10 @@ label { color: var(--text-secondary); font-size: 12px; display: block; margin-bo
   animation: slideIn 0.2s ease;
   max-width: 360px;
 }
-.toast-success { background: var(--accent-green); color: #000; }
-.toast-error { background: var(--accent-red); color: #fff; }
-.toast-warning { background: var(--accent-orange); color: #000; }
-.toast-info { background: var(--accent-blue); color: #fff; }
+.toast-success { background: var(--accent-green); color: var(--on-accent-green); }
+.toast-error { background: var(--accent-red); color: var(--on-accent-red); }
+.toast-warning { background: var(--accent-orange); color: var(--on-accent-orange); }
+.toast-info { background: var(--accent-blue); color: var(--on-accent-blue); }
 
 @keyframes slideIn {
   from { opacity: 0; transform: translateY(10px); }
@@ -253,7 +324,7 @@ label { color: var(--text-secondary); font-size: 12px; display: block; margin-bo
 }
 .toggle-option.active {
   background: var(--accent-blue);
-  color: #fff;
+  color: var(--on-accent-blue);
 }
 .toggle-option:hover:not(.active) {
   background: var(--bg-hover);
@@ -289,6 +360,102 @@ label { color: var(--text-secondary); font-size: 12px; display: block; margin-bo
   display: inline-block;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Tab strip — 17 tabs must scroll, never wrap or push the toolbar off-screen */
+.tab-strip {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tab-strip::-webkit-scrollbar { height: 0; }
+/* Fade the edge that still has tabs behind it, so a clipped label reads as
+   "scroll for more" rather than a broken layout. */
+.tab-strip.fade-r { mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
+.tab-strip.fade-l { mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent); }
+.tab-strip.fade-l.fade-r {
+  mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+}
+
+.tab {
+  background: transparent;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 6px 10px 5px;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  font-size: 12px;
+}
+.tab:hover { color: var(--text-primary); background: var(--bg-secondary); }
+.tab.active {
+  color: var(--text-primary);
+  font-weight: 600;
+  border-bottom-color: var(--accent-blue);
+}
+.tab .tab-count {
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+.tab.active .tab-count { color: var(--accent-blue); }
+
+/* Pinned action bar at the bottom of a scrolling side panel */
+.panel-footer {
+  flex-shrink: 0;
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+/* Empty state */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 48px 24px;
+  text-align: center;
+}
+.empty-state .empty-icon { font-size: 26px; opacity: 0.5; line-height: 1; }
+.empty-state .empty-title { color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.empty-state .empty-hint { color: var(--text-muted); font-size: 12px; max-width: 380px; }
+
+/* Settings section rail */
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 24px 8px;
+  width: 210px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.settings-nav button {
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-nav button:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.settings-nav button.active {
+  background: var(--tint-blue);
+  color: var(--accent-blue);
+  font-weight: 600;
+}
 
 /* Utility */
 .flex { display: flex; }

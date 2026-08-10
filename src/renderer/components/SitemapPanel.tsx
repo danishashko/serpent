@@ -189,7 +189,7 @@ export default function SitemapPanel({ crawlId, pages }: Props): React.ReactElem
 
             {anaResult.errors.length > 0 && (
               <div style={{ marginTop: 12 }}>
-                <strong style={{ fontSize: 11, color: '#f85149' }}>Errors</strong>
+                <strong style={{ fontSize: 11, color: 'var(--accent-red)' }}>Errors</strong>
                 <ul style={{ margin: '4px 0 0', paddingLeft: 20, fontSize: 11, color: 'var(--text-secondary)' }}>
                   {anaResult.errors.map((e, i) => <li key={i}>{e}</li>)}
                 </ul>
@@ -203,7 +203,7 @@ export default function SitemapPanel({ crawlId, pages }: Props): React.ReactElem
 }
 
 function Stat({ label, value, severity }: { label: string; value: number; severity?: 'warn' | 'crit' }): React.ReactElement {
-  const color = severity === 'crit' ? '#f85149' : severity === 'warn' ? '#d29922' : 'var(--text-primary)';
+  const color = severity === 'crit' ? 'var(--accent-red)' : severity === 'warn' ? 'var(--accent-orange)' : 'var(--text-primary)';
   return (
     <div style={{
       padding: '6px 10px',

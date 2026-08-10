@@ -136,20 +136,20 @@ test.describe('New features — UI-driven QA', () => {
     expect(startResult).toMatchObject({ success: true });
 
     // Wait for the renderer to receive onCrawlComplete and load pages.
-    // We assert by waiting for the "Pages (N)" tab counter to go > 0.
+    // We assert by waiting for the Pages tab counter to go > 0. The count
+    // lives in a .tab-count span alongside the label.
     await window.waitForFunction(() => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      const pagesBtn = btns.find(b => /^Pages \(\d+\)$/.test(b.textContent?.trim() ?? ''));
-      if (!pagesBtn) return false;
-      const m = pagesBtn.textContent!.match(/Pages \((\d+)\)/);
-      return m ? Number(m[1]) > 0 : false;
+      const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+      const pagesTab = tabs.find(t => t.firstChild?.textContent?.trim() === 'Pages');
+      const count = pagesTab?.querySelector('.tab-count')?.textContent?.trim();
+      return count ? Number(count) > 0 : false;
     }, { timeout: 60_000 });
 
     // ────────────────────────────────────────
     // (3) ISSUES TAB
     // ────────────────────────────────────────
-    // Click the "Issues" tab (exact match — sibling tab is "Issues List (N)").
-    const issuesTabBtn = window.getByRole('button', { name: 'Issues', exact: true });
+    // Click the "Issues" tab (exact match — sibling tab is "Issue list N").
+    const issuesTabBtn = window.getByRole('tab', { name: 'Issues', exact: true });
     await expect(issuesTabBtn).toBeVisible({ timeout: 10_000 });
     await issuesTabBtn.click();
 
@@ -192,7 +192,7 @@ test.describe('New features — UI-driven QA', () => {
     // ────────────────────────────────────────
     // (4) SITEMAP PANEL
     // ────────────────────────────────────────
-    const sitemapTabBtn = window.getByRole('button', { name: 'Sitemap', exact: true });
+    const sitemapTabBtn = window.getByRole('tab', { name: 'Sitemap', exact: true });
     await expect(sitemapTabBtn).toBeVisible();
     await sitemapTabBtn.click();
 

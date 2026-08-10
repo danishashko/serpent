@@ -29,10 +29,10 @@ function getPageColor(page: PageData): string {
   if (!page.hasStructuredData) warning++;
   if (!page.hasHSTS) warning++;
 
-  if (critical > 0) return '#ef4444';
-  if (warning > 2) return '#f97316';
-  if (warning > 0) return '#f59e0b';
-  return '#22c55e';
+  if (critical > 0) return 'var(--map-bad)';
+  if (warning > 2) return 'var(--map-alert)';
+  if (warning > 0) return 'var(--map-warn)';
+  return 'var(--map-ok)';
 }
 
 function getIssueCount(page: PageData): number {
@@ -79,7 +79,7 @@ function buildTree(pages: PageData[]): TreeNode[] {
         name: group,
         size: 0,
         url: '',
-        color: '#666',
+        color: 'var(--map-group)',
         issues: 0,
         children: groupPages.map(p => ({
           name: p.url,
@@ -130,9 +130,8 @@ function CustomTreemapContent(props: CustomContentProps) {
         height={height}
         style={{
           fill: color,
-          stroke: '#1a1a2e',
+          stroke: 'var(--map-stroke)',
           strokeWidth: 2,
-          opacity: 0.85,
           cursor: 'pointer',
         }}
       />
@@ -144,7 +143,7 @@ function CustomTreemapContent(props: CustomContentProps) {
           dominantBaseline="central"
           style={{
             fontSize: Math.min(12, Math.max(8, width / 12)),
-            fill: '#fff',
+            fill: 'var(--map-label)',
             pointerEvents: 'none',
             fontWeight: 500,
           }}
@@ -170,8 +169,10 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Toolti
   const data = payload[0].payload;
   return (
     <div style={{
-      background: 'var(--bg-elevated, #1e1e2e)',
-      border: '1px solid var(--border, #333)',
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border)',
+      color: 'var(--text-primary)',
+      boxShadow: 'var(--shadow)',
       padding: '8px 12px',
       borderRadius: '6px',
       fontSize: '0.8rem',
@@ -192,7 +193,13 @@ export default function SiteMap({ pages, onPageSelect }: SiteMapProps) {
   }, [onPageSelect]);
 
   if (pages.length === 0) {
-    return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted, #888)' }}>No pages to visualize</div>;
+    return (
+      <div className="empty-state">
+        <div className="empty-icon">🗺</div>
+        <div className="empty-title">Nothing to map yet</div>
+        <div className="empty-hint">Run a crawl and every page shows up here sized by link score.</div>
+      </div>
+    );
   }
 
   const summary = {
@@ -203,16 +210,16 @@ export default function SiteMap({ pages, onPageSelect }: SiteMapProps) {
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', gap: '1rem', padding: '0.5rem 1rem', fontSize: '0.8rem' }}>
-        <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: '#22c55e', marginRight: 4 }} />Healthy: {summary.healthy}</span>
-        <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: '#f59e0b', marginRight: 4 }} />With issues: {summary.withIssues}</span>
-        <span style={{ color: 'var(--text-muted, #888)' }}>Size = Link Score</span>
+        <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: 'var(--map-ok)', marginRight: 4 }} />Healthy: {summary.healthy}</span>
+        <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: 'var(--map-warn)', marginRight: 4 }} />With issues: {summary.withIssues}</span>
+        <span style={{ color: 'var(--text-muted)' }}>Size = Link Score</span>
       </div>
       <div style={{ flex: 1, minHeight: 400 }}>
         <ResponsiveContainer width="100%" height="100%">
           <Treemap
             data={treeData}
             dataKey="size"
-            stroke="#1a1a2e"
+            stroke="var(--map-stroke)"
             content={<CustomTreemapContent x={0} y={0} width={0} height={0} name="" color="" url="" issues={0} />}
             onClick={handleClick}
             isAnimationActive={false}

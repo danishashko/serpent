@@ -6,10 +6,10 @@ interface CrawlComparisonProps {
 }
 
 const statusColors: Record<string, string> = {
-  added: 'var(--accent-green, #22c55e)',
-  removed: 'var(--accent-red, #ef4444)',
-  changed: 'var(--accent-yellow, #f59e0b)',
-  unchanged: 'var(--text-muted, #888)',
+  added: 'var(--accent-green)',
+  removed: 'var(--accent-red)',
+  changed: 'var(--accent-orange)',
+  unchanged: 'var(--text-muted)',
 };
 
 export default function CrawlComparison({ diffs, onClose }: CrawlComparisonProps) {
@@ -42,14 +42,14 @@ export default function CrawlComparison({ diffs, onClose }: CrawlComparisonProps
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
         <thead>
           <tr>
-            <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border, #333)' }}>Status</th>
-            <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border, #333)' }}>URL</th>
-            <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border, #333)' }}>Changes</th>
+            <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>Status</th>
+            <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>URL</th>
+            <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>Changes</th>
           </tr>
         </thead>
         <tbody>
           {sorted.filter(d => d.status !== 'unchanged').map((diff, i) => (
-            <tr key={i} style={{ borderBottom: '1px solid var(--border, #222)' }}>
+            <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
               <td style={{ padding: '6px 8px', color: statusColors[diff.status], fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                 {diff.status}
               </td>
@@ -72,7 +72,7 @@ export default function CrawlComparison({ diffs, onClose }: CrawlComparisonProps
       </table>
 
       {counts.unchanged > 0 && (
-        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted, #888)', marginTop: '1rem' }}>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '1rem' }}>
           {counts.unchanged} unchanged pages hidden
         </p>
       )}

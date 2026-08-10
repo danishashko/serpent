@@ -194,13 +194,22 @@ export default function CrawlConfig({
     <div
       style={{
         flex: 1,
-        overflowY: "auto",
-        padding: 12,
         display: "flex",
         flexDirection: "column",
-        gap: 14,
+        overflow: "hidden",
       }}
     >
+      {/* Only the form scrolls — the action bar below stays pinned. */}
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
       <div>
         <label
           style={{
@@ -232,7 +241,7 @@ export default function CrawlConfig({
                   inputMode === id
                     ? "var(--accent-blue)"
                     : "var(--bg-secondary)",
-                color: inputMode === id ? "#fff" : "var(--text-secondary)",
+                color: inputMode === id ? "var(--on-accent-blue)" : "var(--text-secondary)",
                 border:
                   "1px solid " +
                   (inputMode === id ? "var(--accent-blue)" : "var(--border)"),
@@ -404,14 +413,14 @@ export default function CrawlConfig({
                 e === "local"
                   ? "var(--accent-green)"
                   : e === "brightdata-browser"
-                    ? "#3b82f6"
+                    ? "var(--accent-blue)"
                     : "var(--accent-orange)";
               const bg =
                 e === "local"
-                  ? "rgba(46,213,115,0.12)"
+                  ? "var(--tint-green)"
                   : e === "brightdata-browser"
-                    ? "rgba(59,130,246,0.12)"
-                    : "rgba(255,140,50,0.12)";
+                    ? "var(--tint-blue)"
+                    : "var(--tint-orange)";
               const label =
                 e === "local"
                   ? "🔧 Local"
@@ -457,7 +466,7 @@ export default function CrawlConfig({
           </p>
         )}
         {config.engine === "brightdata-browser" && (
-          <p style={{ fontSize: 10, color: "#3b82f6", marginTop: 4 }}>
+          <p style={{ fontSize: 10, color: "var(--accent-blue)", marginTop: 4 }}>
             Renders JS/SPAs · ~$8/GB · Set Browser API credentials in Settings
           </p>
         )}
@@ -633,7 +642,7 @@ export default function CrawlConfig({
               "1px solid " +
               (config.jsRender ? "var(--accent-blue)" : "var(--border)"),
             background: config.jsRender
-              ? "rgba(76,133,255,0.07)"
+              ? "var(--tint-blue)"
               : "var(--bg-secondary)",
           }}
         >
@@ -749,11 +758,10 @@ export default function CrawlConfig({
 
       {/* Advanced crawl behavior */}
       <AdvancedSection config={config} set={set} busy={busy} />
+      </div>
 
-      {/* Action buttons */}
-      <div
-        style={{ display: "flex", gap: 6, marginTop: "auto", paddingTop: 8 }}
-      >
+      {/* Action buttons — pinned, so Start (and Stop mid-crawl) never scroll away */}
+      <div className="panel-footer">
         {!busy ? (
           <button
             className="btn-primary"
@@ -1309,13 +1317,13 @@ function CustomRobotsSection(props: CustomRobotsProps): React.ReactElement {
                 padding: 8,
                 borderRadius: 4,
                 background: result.allowed
-                  ? "rgba(46,160,67,0.12)"
-                  : "rgba(248,81,73,0.12)",
+                  ? "var(--tint-green)"
+                  : "var(--tint-red)",
                 border:
                   "1px solid " +
                   (result.allowed
-                    ? "rgba(46,160,67,0.4)"
-                    : "rgba(248,81,73,0.4)"),
+                    ? "var(--accent-green)"
+                    : "var(--accent-red)"),
                 fontSize: 11,
                 lineHeight: 1.4,
               }}

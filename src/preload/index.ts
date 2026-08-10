@@ -168,4 +168,8 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('update:downloaded', (_event, info) => cb(info));
   },
   installUpdate: () => ipcRenderer.invoke('update:install'),
+
+  // Theme — repaints the native title bar overlay to match the renderer
+  setTitleBarTheme: (opts: { bg: string; symbol: string; theme: 'light' | 'dark' }) =>
+    ipcRenderer.invoke('theme:set-titlebar', opts),
 });

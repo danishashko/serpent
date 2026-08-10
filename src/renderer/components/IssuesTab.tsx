@@ -15,10 +15,10 @@ const SEVERITY_ORDER: Record<IssueSeverity, number> = {
 };
 
 const SEVERITY_COLOR: Record<IssueSeverity, string> = {
-  critical: '#f85149',
-  warning: '#d29922',
-  opportunity: '#58a6ff',
-  info: '#8b949e',
+  critical: 'var(--accent-red)',
+  warning: 'var(--accent-orange)',
+  opportunity: 'var(--accent-blue)',
+  info: 'var(--text-secondary)',
 };
 
 // Build a map of targetUrl → source URLs for the inlinks export

@@ -232,6 +232,16 @@ app.whenReady().then(() => {
     autoUpdater.quitAndInstall();
   });
 
+  // The frameless title bar overlay draws its own window controls, so it does
+  // not inherit the renderer's theme — repaint it when the renderer switches.
+  ipcMain.handle('theme:set-titlebar', (_event, opts: { bg: string; symbol: string }) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.setBackgroundColor(opts.bg);
+    if (process.platform === 'win32') {
+      mainWindow.setTitleBarOverlay({ color: opts.bg, symbolColor: opts.symbol, height: 32 });
+    }
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

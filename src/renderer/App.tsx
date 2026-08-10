@@ -4,6 +4,7 @@ import ResultsTabs from './components/ResultsTabs';
 import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
+import { applyTheme, getThemePref, watchSystemTheme, type ThemePref } from './lib/theme';
 import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore, EmbeddingStatus, EmbeddingRunConfig, SemanticAnalysis, SemanticNeighbourRow, ScheduleDiffSummary } from '../types/index';
 
 // Allow Electron drag region CSS property
@@ -101,6 +102,7 @@ declare global {
       onUpdateAvailable: (cb: (info: { version: string }) => void) => void;
       onUpdateDownloaded: (cb: (info: { version: string }) => void) => void;
       installUpdate?: () => Promise<void>;
+      setTitleBarTheme?: (opts: { bg: string; symbol: string; theme: 'light' | 'dark' }) => Promise<void>;
     };
   }
 }
@@ -127,6 +129,8 @@ export default function App(): React.ReactElement {
   const [discoverResults, setDiscoverResults] = useState<DiscoverResult[]>([]);
   const [contentGaps, setContentGaps] = useState<ContentGap[]>([]);
   const [updateBanner, setUpdateBanner] = useState<{ version: string; downloaded: boolean } | null>(null);
+  const [themePref, setThemePref] = useState<ThemePref>(getThemePref);
+  const [configCollapsed, setConfigCollapsed] = useState(false);
 
   const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = toastCounter + 1;
@@ -309,6 +313,17 @@ export default function App(): React.ReactElement {
     }
   };
 
+  // Follow the OS while the preference is 'system'.
+  useEffect(() => watchSystemTheme(() => setThemePref('system')), []);
+
+  const cycleTheme = () => {
+    const next: ThemePref = themePref === 'system' ? 'light' : themePref === 'light' ? 'dark' : 'system';
+    applyTheme(next);
+    setThemePref(next);
+  };
+  const themeIcon = themePref === 'light' ? '☀' : themePref === 'dark' ? '☾' : '◐';
+  const themeLabel = `Theme: ${themePref} (click to change)`;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       {/* Title bar drag area */}
@@ -338,21 +353,42 @@ export default function App(): React.ReactElement {
             </button>
           ))}
         </nav>
-        {progress && progress.status === 'running' && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, WebkitAppRegion: 'no-drag', paddingRight: 8 }}>
-            <span className="spinner" />
-            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-              {progress.completed} / {progress.total} URLs · {progress.pagesPerSecond}/s
-                          {progress.totalSpendUsd > 0 && ` · $${progress.totalSpendUsd.toFixed(4)}`}
-            </span>
-          </div>
-        )}
+        {/* titlebar-area-width excludes the native caption buttons drawn by
+            titleBarOverlay — without it this cluster sits underneath them. */}
+        <div style={{
+          marginLeft: 'auto',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          WebkitAppRegion: 'no-drag',
+          paddingRight: 8,
+          marginRight: 'calc(100vw - env(titlebar-area-width, 100vw))',
+        }}>
+          {progress && progress.status === 'running' && (
+            <>
+              <span className="spinner" />
+              <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                {progress.completed} / {progress.total} URLs · {progress.pagesPerSecond}/s
+                {progress.totalSpendUsd > 0 && ` · $${progress.totalSpendUsd.toFixed(4)}`}
+              </span>
+            </>
+          )}
+          <button
+            className="btn-icon"
+            onClick={cycleTheme}
+            title={themeLabel}
+            aria-label={themeLabel}
+            style={{ fontSize: 14, lineHeight: 1, padding: '3px 7px' }}
+          >
+            {themeIcon}
+          </button>
+        </div>
       </div>
 
       {/* Update notification banner */}
       {updateBanner && (
         <div style={{
-          background: updateBanner.downloaded ? '#166534' : '#1e3a5f',
+          background: updateBanner.downloaded ? 'var(--tint-green)' : 'var(--tint-blue)',
           borderBottom: '1px solid var(--border)',
           padding: '6px 16px',
           display: 'flex',
@@ -361,7 +397,7 @@ export default function App(): React.ReactElement {
           fontSize: 12,
           flexShrink: 0,
         }}>
-          <span style={{ color: '#d1fae5' }}>
+          <span style={{ color: 'var(--text-primary)' }}>
             {updateBanner.downloaded
               ? `✅ Serpent ${updateBanner.version} downloaded — restart to install`
               : `⬆️ Serpent ${updateBanner.version} is available — downloading in background...`}
@@ -370,7 +406,7 @@ export default function App(): React.ReactElement {
             {updateBanner.downloaded && (
               <button
                 className="btn-icon"
-                style={{ fontSize: 11, padding: '2px 10px', background: 'var(--accent-green)', color: '#000', borderRadius: 4 }}
+                style={{ fontSize: 11, padding: '2px 10px', background: 'var(--accent-green)', color: 'var(--on-accent-green)', borderRadius: 4 }}
                 onClick={() => window.api.installUpdate?.()}
               >
                 Restart & Install
@@ -378,7 +414,7 @@ export default function App(): React.ReactElement {
             )}
             <button
               className="btn-icon"
-              style={{ fontSize: 11, color: '#d1fae5', opacity: 0.7 }}
+              style={{ fontSize: 11, opacity: 0.7 }}
               onClick={() => setUpdateBanner(null)}
             >
               ✕
@@ -391,23 +427,50 @@ export default function App(): React.ReactElement {
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
         {view === 'crawl' ? (
           <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-            {/* Left panel */}
+            {/* Left panel — collapsible, so results can use the full width */}
             <div style={{
-              width: 280,
+              width: configCollapsed ? 36 : 280,
               flexShrink: 0,
               borderRight: '1px solid var(--border)',
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
+              transition: 'width 0.15s ease',
             }}>
-              <CrawlConfig
-                progress={progress}
-                onCrawlStart={handleCrawlStart}
-                showToast={showToast}
-              />
-              {progress && progress.totalSpendUsd > 0 && (
-                <CostMonitor progress={progress} />
-              )}
+              <button
+                className="btn-icon"
+                onClick={() => setConfigCollapsed(c => !c)}
+                title={configCollapsed ? 'Show crawl setup' : 'Hide crawl setup'}
+                aria-label={configCollapsed ? 'Show crawl setup' : 'Hide crawl setup'}
+                aria-expanded={!configCollapsed}
+                style={{
+                  flexShrink: 0,
+                  borderRadius: 0,
+                  borderBottom: '1px solid var(--border)',
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  textAlign: configCollapsed ? 'center' : 'right',
+                }}
+              >
+                {configCollapsed ? '»' : '« Hide setup'}
+              </button>
+              {/* Hidden, not unmounted — collapsing must not discard a
+                  half-filled crawl form or the live Pause/Stop controls. */}
+              <div style={{
+                display: configCollapsed ? 'none' : 'flex',
+                flexDirection: 'column',
+                flex: 1,
+                overflow: 'hidden',
+              }}>
+                <CrawlConfig
+                  progress={progress}
+                  onCrawlStart={handleCrawlStart}
+                  showToast={showToast}
+                />
+                {progress && progress.totalSpendUsd > 0 && (
+                  <CostMonitor progress={progress} />
+                )}
+              </div>
             </div>
 
             {/* Results */}
