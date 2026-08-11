@@ -18,7 +18,7 @@ interface TreeNode {
   [key: string]: unknown;
 }
 
-interface PageHealth {
+export interface PageHealth {
   critical: number;
   warning: number;
   total: number;
@@ -35,7 +35,7 @@ const EMPTY_HEALTH: PageHealth = { critical: 0, warning: 0, total: 0 };
  * unhealthy, and since almost no page on almost any site has all of those, the
  * legend read "Healthy: 0" and the map rendered as one flat colour everywhere.
  */
-function buildHealth(pages: PageData[]): Map<string, PageHealth> {
+export function buildHealth(pages: PageData[]): Map<string, PageHealth> {
   const health = new Map<string, PageHealth>();
   for (const p of pages) health.set(p.url, { critical: 0, warning: 0, total: 0 });
 
