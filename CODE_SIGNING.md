@@ -13,7 +13,7 @@ Without a code signing certificate, Windows SmartScreen shows a warning when use
 | GitHub Actions release workflow | ✅ Ready |
 | OSI-approved license (MIT) | ✅ Done |
 | Public repository | ✅ Done |
-| Published release | ✅ v1.0.0 |
+| Published release | ✅ v1.0.1 |
 | "Code signing policy" on home page + release page | ✅ Done |
 | MFA on GitHub | ⬜ Confirm |
 | SignPath application | ⏳ Not submitted |
@@ -33,7 +33,7 @@ Details to supply:
 | Project URL | `https://github.com/danishashko/serpent` |
 | License | MIT (OSI-approved, no commercial dual-licensing) |
 | Description | AI-native local SEO spider — a free, open-source technical SEO crawler |
-| Latest release | `https://github.com/danishashko/serpent/releases/tag/v1.0.0` |
+| Latest release | `https://github.com/danishashko/serpent/releases` |
 | Code signing policy | `https://github.com/danishashko/serpent#code-signing-policy` |
 | Build system | GitHub Actions (`.github/workflows/release.yml`), tag-triggered |
 
