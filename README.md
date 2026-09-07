@@ -33,6 +33,8 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 | 💸 **Genuinely free** | No URL caps, no license server, no subscription. MIT-licensed and unlimited. |
 | 🔒 **100% local** | SQLite storage, OS-keychain secrets, zero telemetry. Your crawl data never leaves your machine. |
 | 🛡️ **Crawls the un-crawlable** | Optional Bright Data integration bypasses bot protection; Electron's built-in Chromium renders JS — no separate browser required. |
+| 🌐 **Built for AI search** | GEO/AEO readiness scoring per page, plus `llms.txt` validation — audit how answer engines read your site, not just how Google crawls it. |
+| ♿ **Accessibility included** | Every crawl runs a static WCAG pass. No second tool, no extra request. |
 | 🤖 **Agent-ready** | A built-in MCP server lets Claude Desktop (or any MCP client) drive crawls and query results directly. |
 
 ---
@@ -46,6 +48,10 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 | Site Map (Treemap) | Settings |
 |---|---|
 | ![Treemap visualizing site structure by link score](docs/screenshot-treemap.png) | ![Settings panel with theme switcher and Bright Data config](docs/screenshot-settings.png) |
+
+| GEO / AEO Readiness |
+|---|
+| ![GEO tab showing per-page AI search readiness scores across entity clarity, answer readiness, citation signals and structured data](docs/screenshot-geo.png) |
 
 ---
 
@@ -112,6 +118,65 @@ Hashing catches pages that share wording. Embeddings catch pages that share *mea
 </details>
 
 <details>
+<summary><b>🌐 GEO / AEO — AI Search Readiness</b></summary>
+
+Traditional crawlers score a page for Google's index. This scores it for the answer engines that read your page and quote it back to a user.
+
+Every crawled page gets a **0-100 GEO score** across four axes:
+
+- **Entity clarity** — is it obvious what and who this page is about, and are the entities named consistently?
+- **Answer readiness** — does the page answer a question directly, in a passage that can be lifted and cited?
+- **Citation signals** — the attribution surface: authorship, dates, sourcing, outbound evidence
+- **Structured data completeness** — how much of the page's meaning is machine-readable rather than inferred
+
+Plus **`llms.txt` validation** against the [llmstxt.org](https://llmstxt.org) proposal: whether the file exists, whether it is structurally valid (H1, blockquote summary, H2 link sections), whether `llms-full.txt` is published alongside it, and **which of its links your crawl never reached** — a link in `llms.txt` that a crawler cannot follow is one an LLM cannot fetch either.
+
+</details>
+
+<details>
+<summary><b>♿ Accessibility (WCAG)</b></summary>
+
+A static WCAG 2.2 pass runs on every crawled page, using the same parsed document as the SEO extractors — no second request, no render pass, no separate tool.
+
+14 rules across four impact levels, using axe-core's rule ids and vocabulary so results line up with the tooling you already run:
+
+| Impact | Rules |
+|---|---|
+| Critical | `image-alt` · `input-label` · `button-name` · `meta-viewport` |
+| Serious | `link-name` · `html-has-lang` · `html-lang-valid` · `document-title` · `frame-title` · `tabindex-positive` · `th-has-data-cells` |
+| Moderate | `heading-order` |
+| Minor | `empty-heading` · `duplicate-id` |
+
+Each page gets a 0-100 score weighted by impact and by the number of failing elements, surfaced as an **A11y** column in the Pages tab and rolled into the Issues tab under an **Accessibility** category.
+
+> **Known limitation:** rules that need computed style or layout — **colour contrast above all** — cannot be evaluated from static markup and are not implemented. A page scoring 100 here has passed the static rules only; run a browser-based checker for contrast.
+
+</details>
+
+<details>
+<summary><b>⚡ Performance Scoring</b></summary>
+
+- **0-100 performance score** per page across TTFB, page size, image optimization, and content efficiency
+- Complements the PageSpeed Insights integration — the score works on every page in the crawl, without burning PSI quota
+
+</details>
+
+<details>
+<summary><b>🔭 Competitor Discovery & Content Gaps</b></summary>
+
+- **Competitor discovery** via the Bright Data Discover API — find who else ranks in your space
+- **Content gap analysis** — topics competitors cover that your crawl has no page for
+
+</details>
+
+<details>
+<summary><b>📄 PDF Reports</b></summary>
+
+Generate a client-ready PDF from any crawl, with selectable sections: executive summary, technical issues, content quality, performance, GEO readiness, internal links, structured data, security, and images.
+
+</details>
+
+<details>
 <summary><b>📊 Issue Intelligence</b></summary>
 
 - **Severity scoring** — Critical / Warning / Info / Opportunity
@@ -143,11 +208,15 @@ Hashing catches pages that share wording. Embeddings catch pages that share *mea
 
 ## 🚀 Quick Start
 
-> **Just want the app?** Grab a prebuilt installer from the [**Releases**](https://github.com/danishashko/serpent/releases) page (Windows `.exe`, macOS `.dmg`, Linux `.AppImage`).
+> **Just want the app?** Grab a prebuilt installer from the [**Releases**](https://github.com/danishashko/serpent/releases) page — Windows `.exe`, macOS `.dmg` (Apple Silicon and Intel), Linux `.AppImage`.
+>
+> Builds are currently **unsigned** while the [SignPath Foundation](https://signpath.org) application is pending, so first launch needs one extra step:
+> **Windows** — SmartScreen: *More info → Run anyway*. **macOS** — Gatekeeper: right-click → *Open*, then confirm. **Linux** — `chmod +x` the AppImage, and install `libsecret` (`libsecret-1-0` on Debian/Ubuntu, `libsecret` on Arch) which the OS keychain integration needs at startup.
+> Every release ships SHA256 checksums and GitHub build provenance so you can verify the binary came from this repo. Every release page carries a *Verify this download* section with the exact commands.
 
 ### Run from source
 
-**Prerequisites:** Node.js 18+ · npm · Git
+**Prerequisites:** Node.js 20+ · npm · Git
 
 ```bash
 git clone https://github.com/danishashko/serpent.git
@@ -168,7 +237,8 @@ npm run dist         # → ./release  (NSIS .exe / DMG / AppImage for your OS)
 2. Pick an engine (**Local** is free; **Bright Data** for protected sites) and set depth/limits.
 3. Hit **Start** — watch pages stream into the **Pages** tab live.
 4. Open **Settings**, add an AI key, then click **Analyze** for severity-scored issues and fixes.
-5. **Export** as CSV/JSON, or explore the **Treemap** and **Issues** tabs.
+5. Open the **GEO** tab and hit **Run GEO/AEO Analysis** to score the crawl for AI search, and **Check llms.txt** to validate the file.
+6. **Export** as CSV/JSON, or explore the **Treemap** and **Issues** tabs.
 
 ---
 
@@ -212,10 +282,10 @@ flowchart LR
 
 1. **Configure** your crawl — URL, depth, concurrency, rate limit, extraction options.
 2. **Crawl** with the local engine or Bright Data (pause/resume supported).
-3. **Review** data across the results tabs — Pages, Links, Images, Issues, Sitemap, Semantic, Redirects, Hreflang, Duplicates, Extractions, SERP.
+3. **Review** data across the results tabs — Pages, Links, Images, Issues, Issue list, Sitemap, Semantic, Redirects, Hreflang, Duplicates, Extractions, SERP, Map, GEO, Perf, Competitors and Gaps.
 4. **Analyze** with your AI provider — severity-scored issues with fix suggestions.
-5. **Visualize** as a treemap, compare crawls, and connect GSC for orphan-page detection.
-6. **Export** results as CSV or JSON.
+5. **Score for AI search** in the GEO tab, check your `llms.txt`, then **visualize** as a treemap, compare crawls, and connect GSC for orphan-page detection.
+6. **Export** results as CSV or JSON, or generate a client-ready PDF report.
 
 ---
 
@@ -246,7 +316,13 @@ flowchart LR
 | Bot-protection bypass | ✅ Bright Data | ❌ |
 | SERP analysis | ✅ Bright Data | ❌ |
 | Cost monitoring | ✅ Real-time | N/A |
-| MCP server (AI agents) | ✅ | ❌ |
+| GEO / AEO readiness scoring | ✅ 4-axis score per page | ❌ |
+| `llms.txt` validation | ✅ Structure + link coverage | ❌ |
+| Accessibility (WCAG) | ✅ 14 static rules, no contrast | ✅ axe-core, incl. contrast |
+| Performance scoring | ✅ Built-in, no API quota | ✅ (Lighthouse/PSI) |
+| Competitor discovery + content gaps | ✅ Bright Data | ❌ |
+| PDF client reports | ✅ | ❌ |
+| MCP server (AI agents) | ✅ | ✅ |
 | Local data storage | ✅ SQLite | ✅ |
 | Cross-platform | ✅ Win/Mac/Linux | ✅ Win/Mac/Linux |
 | Open source | ✅ MIT | ❌ |
@@ -268,6 +344,10 @@ Serpent runs a built-in **Model Context Protocol** server at **`http://127.0.0.1
 | `get_results` | Get page-level SEO data for a crawl (paginated). |
 | `get_issues` | Get SEO issues grouped by severity. |
 | `export_csv` | Export full crawl data as CSV text. |
+| `get_links` | Get the internal link graph as source→target pairs with anchor text, for orphan pages and link equity. |
+| `get_images` | Audit crawled images: missing alt text, format, lazy-loading status. |
+| `get_settings` | Check which crawl engines and features are configured. |
+| `set_settings` | Save Bright Data credentials so the `brightdata` engine becomes available. |
 
 ### Connect from Claude Desktop
 
@@ -398,7 +478,9 @@ providers) are off by default, require you to supply your own API key, and are l
 with their destinations in the Privacy Policy.
 
 > **Status:** the SignPath Foundation application is pending. Until it is approved,
-> release binaries are unsigned and Windows SmartScreen will warn on first run.
+> release binaries are unsigned: Windows SmartScreen warns on first run, and macOS
+> Gatekeeper refuses to open the app until you right-click → *Open*. SignPath signs
+> Windows binaries only, so macOS and Linux builds stay unsigned either way.
 
 ---
 

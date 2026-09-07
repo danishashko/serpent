@@ -1,6 +1,6 @@
 /**
  * Screenshot capture script — takes UI screenshots for the README.
- * Launches the app, runs a quick crawl on example.com, then captures tabs.
+ * Launches the app, runs a quick crawl on developer.mozilla.org, then captures tabs.
  *
  * Usage:  node scripts/take-screenshots.mjs
  */
@@ -52,28 +52,45 @@ if (!win) throw new Error('App window never appeared');
 
 await win.waitForLoadState('domcontentloaded');
 await win.waitForTimeout(2500);
+
+// Pin the theme. The pref lives in localStorage and is read on mount, so set it
+// and reload; otherwise a capture inherits whatever the host machine's OS theme
+// is and the README ends up with a mixed light/dark set.
+await win.evaluate(() => localStorage.setItem('serpent.theme', 'dark'));
+await win.reload();
+await win.waitForLoadState('domcontentloaded');
+await win.waitForTimeout(2500);
+
 await win.setViewportSize({ width: 1440, height: 900 });
 await win.waitForTimeout(500);
 
-// ─── Start a quick crawl on example.com ──────────────────────────────────────
-console.log('Starting crawl on example.com…');
+// ─── Start a quick crawl on developer.mozilla.org ──────────────────────────────────────
+console.log('Starting crawl on developer.mozilla.org…');
 await win.evaluate(async () => {
   await window.api.crawlStart({
-    startUrl: 'https://ahrefs.com',
+    startUrl: 'https://developer.mozilla.org',
+    mode: 'spider',
     engine: 'local',
+    storageMode: 'database',
     maxUrls: 100,
     maxDepth: 3,
-    rateLimit: 300,
+    concurrency: 3,
+    respectRobots: true,
+    // Without followRedirects, maxHops is 0 and a seed that 302s
+    // (mozilla.org/ -> /en-US/) ends the crawl at a single row.
+    followRedirects: true,
+    restrictToSubdomain: true,
+    timeout: 20000,
     extractTitles: true,
     extractMeta: true,
-    extractLinks: true,
+    extractHeadings: true,
     extractImages: true,
+    extractLinks: true,
+    extractCanonicals: true,
     extractHreflang: false,
-    respectRobots: true,
-    customRobots: '',
-    userAgent: 'Serpent',
-    mode: 'spider',
-    customSelectors: [],
+    maxCostUsd: 0,
+    // Be polite to a production site we do not own.
+    requestsPerSecond: 3,
   });
 });
 
@@ -100,7 +117,9 @@ for (let i = 0; i < 300; i++) {
     console.log(`Crawl ${status}: ${total} pages`);
     break;
   }
-  if (status === 'has_pages' && i > 30) {
+  // 100 URLs at 3 req/s needs ~35s, so give the crawl real time to finish
+  // before settling for a half-populated table.
+  if (status === 'has_pages' && i > 150) {
     // Crawl is taking too long — take screenshots with whatever we have
     console.log('Taking screenshots with in-progress data…');
     break;
@@ -166,6 +185,30 @@ if (await mapTab.isVisible({ timeout: 2000 }).catch(() => false)) {
   await win.waitForTimeout(1000);
 }
 await win.screenshot({ path: join(DOCS, 'screenshot-treemap.png') });
+
+// ─── 5. GEO tab — run the analysis, then capture the scored table ─────────────
+console.log('Screenshot 5: GEO tab (AI search readiness)…');
+const geoTab = win.locator('button').filter({ hasText: /^GEO/ }).first();
+if (await geoTab.isVisible({ timeout: 2000 }).catch(() => false)) {
+  await geoTab.click();
+} else {
+  await win.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const btn = buttons.find(b => b.textContent.trim().startsWith('GEO'));
+    if (btn) btn.click();
+  });
+}
+await win.waitForTimeout(600);
+
+// GEO scores are computed on demand, so the tab is empty until this runs.
+await win.evaluate(() => {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  const run = buttons.find(b => b.textContent.includes('Run GEO/AEO Analysis'));
+  if (run) run.click();
+});
+// Scoring is local and pure, so it finishes in well under a second per page.
+await win.waitForTimeout(2500);
+await win.screenshot({ path: join(DOCS, 'screenshot-geo.png') });
 
 await app.close();
 rmSync(userDataDir, { recursive: true, force: true });
