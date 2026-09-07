@@ -1,6 +1,6 @@
 {
   "name": "serpent",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "AI-native local SEO spider — a free, open-source technical SEO crawler",
   "main": "dist/main/index.js",
   "scripts": {
@@ -100,10 +100,14 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "resources/icon.png"
+      "icon": "resources/icon.png",
+      "artifactName": "Serpent-${version}-${arch}.${ext}"
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "icon": "resources/icon.png",
+      "category": "Development",
+      "artifactName": "Serpent-${version}-${arch}.${ext}"
     },
     "publish": {
       "provider": "github",
