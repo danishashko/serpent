@@ -840,4 +840,49 @@ describe('crawlPageLocal', () => {
       expect(icon?.isLazy).toBe(false);
     });
   });
+
+  describe('accessibility audit', () => {
+    it('scores a clean page at 100 with no violations recorded', async () => {
+      mockResponse('<!DOCTYPE html><html lang="en"><head><title>T</title>' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1"></head>' +
+        '<body><h1>H</h1><p>Body copy.</p></body></html>');
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.a11yScore).toBe(100);
+      expect(page.a11yCritical).toBe(0);
+      expect(page.a11ySerious).toBe(0);
+      expect(page.a11yViolations).toBeNull();
+    });
+
+    it('records critical and serious counts and serialises the violations', async () => {
+      mockResponse('<!DOCTYPE html><html><head><title></title></head>' +
+        '<body><img src="/a.png"><input type="text"><a href="/x"></a></body></html>');
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      // img with no alt + unlabelled input = 2 critical
+      expect(page.a11yCritical).toBe(2);
+      // empty title + missing lang + empty link = 3 serious
+      expect(page.a11ySerious).toBe(3);
+      expect(page.a11yScore).toBeLessThan(100);
+
+      const parsed = JSON.parse(page.a11yViolations as string);
+      expect(parsed.map((v: { id: string }) => v.id)).toEqual(
+        expect.arrayContaining(['image-alt', 'input-label', 'link-name', 'html-has-lang', 'document-title']),
+      );
+    });
+
+    it('leaves the score null on a non-HTML response', async () => {
+      mockResponse('{"a":1}', 200, 'application/json');
+      const { page } = await crawlPageLocal('https://example.com/data.json', crawlId, 0, BASE_CONFIG, baseOrigin);
+      expect(page.a11yScore).toBeNull();
+      expect(page.a11yViolations).toBeNull();
+    });
+
+    it('runs regardless of the extraction toggles', async () => {
+      const minimal = { ...BASE_CONFIG, extractTitles: false, extractMeta: false, extractHeadings: false, extractImages: false, extractLinks: false, extractCanonicals: false };
+      mockResponse('<!DOCTYPE html><html><head><title>T</title></head><body><img src="/a.png"></body></html>');
+      const { page } = await crawlPageLocal('https://example.com/', crawlId, 0, minimal, baseOrigin);
+      expect(page.a11yScore).not.toBeNull();
+      expect(page.a11yCritical).toBe(1);
+    });
+  });
 });

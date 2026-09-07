@@ -126,6 +126,13 @@ export interface PageData {
   simhash: string | null;
   /** Count of internal outlinks on this page that are not crawlable per Google's guidance. */
   uncrawlableOutlinks: number;
+  /** Static-rule accessibility score, 0-100. Null on non-HTML responses. */
+  a11yScore: number | null;
+  /** Failing-element counts by impact, for filtering without parsing the JSON. */
+  a11yCritical: number;
+  a11ySerious: number;
+  /** JSON-serialised A11yViolation[]. Null when the page was not audited. */
+  a11yViolations: string | null;
   /** Body text, capped, stored only when the crawl enabled extractBodyText. */
   bodyText?: string | null;
 }
@@ -380,6 +387,65 @@ export interface GEOScore {
   analyzedAt: string;
 }
 
+// ── llms.txt (llmstxt.org) ──
+
+export interface LlmsTxtLink {
+  name: string;
+  url: string;
+  notes: string | null;
+}
+
+export interface LlmsTxtSection {
+  /** H2 heading. Empty string for links that appeared before any H2. */
+  name: string;
+  links: LlmsTxtLink[];
+}
+
+export interface LlmsTxtIssue {
+  severity: IssueSeverity;
+  message: string;
+  recommendation: string;
+}
+
+export interface LlmsTxtResult {
+  url: string;
+  found: boolean;
+  statusCode: number | null;
+  error: string | null;
+  title: string | null;
+  summary: string | null;
+  sections: LlmsTxtSection[];
+  linkCount: number;
+  /** Links under the spec's "Optional" section, which consumers may skip. */
+  optionalLinkCount: number;
+  linksCrawled: number;
+  /** Capped at 50 for display. */
+  linksNotCrawled: string[];
+  hasLlmsFullTxt: boolean;
+  score: number;
+  issues: LlmsTxtIssue[];
+}
+
+// ── Accessibility (static WCAG rules) ──
+
+export type A11yImpact = 'critical' | 'serious' | 'moderate' | 'minor';
+
+export interface A11yViolation {
+  id: string;
+  impact: A11yImpact;
+  wcag: string;
+  help: string;
+  /** Exact number of failing elements on the page. */
+  count: number;
+  /** Sample of failing elements, capped — see MAX_ELEMENTS_PER_VIOLATION. */
+  elements: string[];
+}
+
+export interface A11yResult {
+  score: number;
+  violations: A11yViolation[];
+}
+
 // ── Performance / Core Web Vitals ──
 
 export interface PerformanceScore {
@@ -556,7 +622,8 @@ export type IssueCategory =
   | 'security'
   | 'social'
   | 'structured_data'
-  | 'content';
+  | 'content'
+  | 'accessibility';
 
 export interface IssueDefinition {
   id: string;            // unique id e.g. "missing_title"
@@ -784,6 +851,8 @@ export const IPC = {
   DISCOVER_GET_GAPS: 'discover:get-gaps',
 
   // Sitemap (XML generation + analysis)
+  LLMS_TXT_ANALYZE: 'llms-txt:analyze',
+
   SITEMAP_GENERATE: 'sitemap:generate',
   SITEMAP_ANALYZE: 'sitemap:analyze',
   SITEMAP_FETCH_URLS: 'sitemap:fetch-urls',

@@ -282,6 +282,19 @@ function createTables(): void {
   // Body text for semantic embeddings — migration for existing DBs
   try { db.exec('ALTER TABLE pages ADD COLUMN body_text TEXT'); } catch { /* already exists */ }
 
+  // Static accessibility audit — migration for existing DBs. Rows crawled
+  // before this shipped keep a NULL score, which the UI renders as "not audited"
+  // rather than as a perfect score.
+  const a11yColumns = [
+    'ALTER TABLE pages ADD COLUMN a11y_score REAL',
+    'ALTER TABLE pages ADD COLUMN a11y_critical INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE pages ADD COLUMN a11y_serious INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE pages ADD COLUMN a11y_violations TEXT',
+  ];
+  for (const ddl of a11yColumns) {
+    try { db.exec(ddl); } catch { /* already exists */ }
+  }
+
   // Page embeddings. Vectors are L2-normalised Float32 blobs.
   db.exec(`
     CREATE TABLE IF NOT EXISTS page_embeddings (
@@ -478,7 +491,8 @@ export function insertPage(page: PageData): void {
       twitter_card, twitter_title, twitter_description, twitter_image,
       schema_types, schema_json, schema_errors, has_structured_data,
       has_hsts, has_csp, x_frame_options, x_content_type_options, image_count, link_score, simhash,
-      uncrawlable_outlinks, body_text
+      uncrawlable_outlinks, body_text,
+      a11y_score, a11y_critical, a11y_serious, a11y_violations
     ) VALUES (
       @id, @crawlId, @url, @statusCode, @contentType,
       @title, @titleLength, @titlePixelWidth,
@@ -490,7 +504,8 @@ export function insertPage(page: PageData): void {
       @twitterCard, @twitterTitle, @twitterDescription, @twitterImage,
       @schemaTypes, @schemaJson, @schemaErrors, @hasStructuredData,
       @hasHSTS, @hasCSP, @xFrameOptions, @xContentTypeOptions, @imageCount, @linkScore, @simhash,
-      @uncrawlableOutlinks, @bodyText
+      @uncrawlableOutlinks, @bodyText,
+      @a11yScore, @a11yCritical, @a11ySerious, @a11yViolations
     )
   `).run({
     id: page.id,
@@ -544,6 +559,10 @@ export function insertPage(page: PageData): void {
     simhash: page.simhash,
     uncrawlableOutlinks: page.uncrawlableOutlinks ?? 0,
     bodyText: page.bodyText ?? null,
+    a11yScore: page.a11yScore ?? null,
+    a11yCritical: page.a11yCritical ?? 0,
+    a11ySerious: page.a11ySerious ?? 0,
+    a11yViolations: page.a11yViolations ?? null,
   });
 }
 
@@ -598,7 +617,9 @@ export function getPagesByCrawl(crawlId: string): PageData[] {
       has_hsts as hasHSTS, has_csp as hasCSP,
       x_frame_options as xFrameOptions, x_content_type_options as xContentTypeOptions,
       image_count as imageCount, link_score as linkScore, simhash,
-      uncrawlable_outlinks as uncrawlableOutlinks, body_text as bodyText
+      uncrawlable_outlinks as uncrawlableOutlinks, body_text as bodyText,
+      a11y_score as a11yScore, a11y_critical as a11yCritical,
+      a11y_serious as a11ySerious, a11y_violations as a11yViolations
     FROM pages WHERE crawl_id = ? ORDER BY created_at ASC
   `).all(crawlId) as PageData[];
 }

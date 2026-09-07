@@ -6,7 +6,7 @@
 // Categories follow common SEO crawler taxonomy where reasonable:
 //   page_titles, meta_description, headings, canonicals, directives,
 //   response_codes, urls, images, links, security, social, structured_data,
-//   content.
+//   content, accessibility.
 //
 // Each detector returns `true` if the page IS affected by the issue.
 // `computeIssues()` builds an IssueInstance per issue id with the list of
@@ -31,6 +31,7 @@ export const META_MAX_PIXELS = 985;
 export const H1_MAX_LEN = 70;
 export const URL_MAX_LEN = 115;
 export const LOW_WORD_COUNT = 200;
+export const A11Y_MIN_SCORE = 70;
 // Googlebot reads only the first 2 MB of an HTML document and drops the rest.
 // (Google previously documented 15 MB; the figure was corrected to 2 MB.)
 export const HTML_MAX_BYTES = 2 * 1024 * 1024;
@@ -210,6 +211,19 @@ export const DETECTORS: Detector[] = [
   d('high_image_count', 'images', 'info', 'High Image Count (>50)',
     'Page contains an unusually high number of images — review weight & alt text.',
     (p) => p.statusCode === 200 && (p.imageCount ?? 0) > 50),
+
+  // ── Accessibility
+  // Rolled up from the per-page static WCAG audit. `a11yScore === null` means
+  // the page predates the audit or was not HTML, which is not a pass.
+  d('a11y_critical', 'accessibility', 'critical', 'Critical Accessibility Violations',
+    'Page has elements that fail a critical WCAG rule — missing image alt, an unlabelled form control, a nameless button, or a viewport that blocks zoom.',
+    (p) => (p.a11yCritical ?? 0) > 0),
+  d('a11y_serious', 'accessibility', 'warning', 'Serious Accessibility Violations',
+    'Page has elements that fail a serious WCAG rule — a link with no discernible text, a missing or invalid html lang, an untitled iframe, or a positive tabindex.',
+    (p) => (p.a11ySerious ?? 0) > 0),
+  d('a11y_low_score', 'accessibility', 'warning', 'Accessibility Score Below 70',
+    `Page scores under ${A11Y_MIN_SCORE}/100 across the static WCAG rules. Note that colour contrast is not evaluated, so the real score can only be lower.`,
+    (p) => p.a11yScore != null && p.a11yScore < A11Y_MIN_SCORE),
 ];
 
 // ─── Public computeIssues() ───────────────────────────────────────────────────
@@ -272,6 +286,7 @@ export function categoryLabel(c: IssueCategory): string {
     case 'social': return 'Social';
     case 'structured_data': return 'Structured Data';
     case 'content': return 'Content';
+    case 'accessibility': return 'Accessibility';
   }
 }
 

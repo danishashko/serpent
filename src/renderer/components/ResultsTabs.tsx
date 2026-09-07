@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore, UncrawlableReason, UNCRAWLABLE_REASON_LABELS } from '../../types/index';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore, UncrawlableReason, UNCRAWLABLE_REASON_LABELS, LlmsTxtResult } from '../../types/index';
 import CrawlComparison from './CrawlComparison';
 import SiteMap from './SiteMap';
 import ExportModal from './ExportModal';
@@ -190,6 +190,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   const [compareCrawls, setCompareCrawls] = useState<CrawlRecord[]>([]);
   const [showCrawlPicker, setShowCrawlPicker] = useState(false);
   const [geoAnalyzing, setGeoAnalyzing] = useState(false);
+  const [llmsTxt, setLlmsTxt] = useState<LlmsTxtResult | null>(null);
+  const [llmsTxtLoading, setLlmsTxtLoading] = useState(false);
   const [perfAnalyzing, setPerfAnalyzing] = useState(false);
   // PageSpeed Insights / CWV
   const [psiScores, setPsiScores] = useState<PsiScore[]>([]);
@@ -486,6 +488,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
           has_hsts: p.hasHSTS ? 'true' : 'false', has_csp: p.hasCSP ? 'true' : 'false',
           x_frame_options: p.xFrameOptions ?? '', x_content_type_options: p.xContentTypeOptions ?? '',
           image_count: p.imageCount ?? '', link_score: p.linkScore ?? '', content_hash: p.contentHash ?? '',
+          a11y_score: p.a11yScore ?? '', a11y_critical: p.a11yCritical ?? '', a11y_serious: p.a11ySerious ?? '',
         })),
         filename: `${prefix}-pages.${ext}`,
       };
@@ -880,6 +883,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <Th label="Link Score" sortable field="linkScore" />
                 <Th label="GEO" />
                 <Th label="Perf" />
+                <Th label="A11y" sortable field="a11yScore" />
                 <Th label="Inlinks" />
                 <Th label="Outlinks" />
                 <Th label="Indexability" />
@@ -887,7 +891,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </thead>
             <tbody>
               {filteredPages.length === 0 ? (
-                <tr><td colSpan={22} className="table-empty">
+                <tr><td colSpan={23} className="table-empty">
                   {pages.length === 0 ? 'Start a crawl to see results' : 'No results match filter'}
                 </td></tr>
               ) : filteredPages.slice(0, MAX_RENDER_ROWS).map(p => {
@@ -951,6 +955,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (p.linkScore ?? 0) >= 50 ? 'var(--accent-green)' : 'var(--text-muted)' }}>{p.linkScore?.toFixed(1) ?? '—'}</td>
                   <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (() => { const g = geoScoreMap.get(p.id); if (!g) return 'var(--text-muted)'; return g.overallScore >= 70 ? 'var(--accent-green)' : g.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'; })() }}>{geoScoreMap.get(p.id)?.overallScore?.toFixed(0) ?? '—'}</td>
                   <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: (() => { const pf = perfScoreMap.get(p.id); if (!pf) return 'var(--text-muted)'; return pf.overallScore >= 70 ? 'var(--accent-green)' : pf.overallScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'; })() }}>{perfScoreMap.get(p.id)?.overallScore?.toFixed(0) ?? '—'}</td>
+                  <td
+                    style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: p.a11yScore == null ? 'var(--text-muted)' : p.a11yScore >= 90 ? 'var(--accent-green)' : p.a11yScore >= 70 ? 'var(--accent-orange)' : 'var(--accent-red)' }}
+                    title={p.a11yScore == null ? 'Not audited' : `${p.a11yCritical ?? 0} critical, ${p.a11ySerious ?? 0} serious failing elements`}
+                  >{p.a11yScore == null ? '—' : p.a11yScore.toFixed(0)}</td>
                   <td>
                     {inlinks.length > 0 ? (
                       <span
@@ -1327,6 +1335,29 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               >
                 {geoAnalyzing ? '⏳ Analyzing…' : '🌐 Run GEO/AEO Analysis'}
               </button>
+              <button
+                className="btn-secondary"
+                style={{ padding: '6px 14px', fontSize: 12 }}
+                disabled={llmsTxtLoading || pages.length === 0}
+                onClick={async () => {
+                  setLlmsTxtLoading(true);
+                  try {
+                    const result = await window.api.llmsTxtAnalyze({ crawlId: crawlId ?? '', siteUrl: pages[0].url });
+                    if ('error' in result && result.error) {
+                      showToast(result.error, 'error');
+                    } else {
+                      setLlmsTxt(result as LlmsTxtResult);
+                      showToast((result as LlmsTxtResult).found ? 'llms.txt found and validated' : 'No llms.txt at this origin', (result as LlmsTxtResult).found ? 'success' : 'info');
+                    }
+                  } catch (err) {
+                    showToast(String(err), 'error');
+                  } finally {
+                    setLlmsTxtLoading(false);
+                  }
+                }}
+              >
+                {llmsTxtLoading ? '⏳ Checking…' : '📄 Check llms.txt'}
+              </button>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{geoScores.length} pages scored</span>
               {geoScores.length > 0 && (
                 <span style={{ fontSize: 11, color: 'var(--accent-green)', fontWeight: 600, marginLeft: 'auto' }}>
@@ -1345,6 +1376,50 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {llmsTxt && (
+              <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: llmsTxt.issues.length > 0 ? 8 : 0 }}>
+                  <span style={{ fontWeight: 600 }}>llms.txt</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{llmsTxt.url}</span>
+                  {llmsTxt.found ? (
+                    <>
+                      <span style={{ fontWeight: 700, color: llmsTxt.score >= 70 ? 'var(--accent-green)' : llmsTxt.score >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)' }}>
+                        {llmsTxt.score}/100
+                      </span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                        {llmsTxt.sections.length} section(s) · {llmsTxt.linkCount} link(s)
+                        {llmsTxt.optionalLinkCount > 0 && ` · ${llmsTxt.optionalLinkCount} optional`}
+                        {llmsTxt.linksNotCrawled.length > 0 && ` · ${llmsTxt.linksNotCrawled.length} not reached by this crawl`}
+                      </span>
+                      <span style={{ color: llmsTxt.hasLlmsFullTxt ? 'var(--accent-green)' : 'var(--text-muted)', fontSize: 11 }}>
+                        llms-full.txt: {llmsTxt.hasLlmsFullTxt ? 'present' : 'absent'}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ color: 'var(--accent-orange)' }}>
+                      Not found{llmsTxt.statusCode != null ? ` (HTTP ${llmsTxt.statusCode})` : ''}
+                    </span>
+                  )}
+                  <button
+                    className="btn-secondary"
+                    style={{ marginLeft: 'auto', padding: '2px 8px', fontSize: 11 }}
+                    onClick={() => setLlmsTxt(null)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+                {llmsTxt.issues.length > 0 && (
+                  <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {llmsTxt.issues.map((iss, i) => (
+                      <li key={i} style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                        <span style={{ color: severityColor(iss.severity), fontWeight: 600 }}>{iss.severity}</span>
+                        {' — '}{iss.message} <span style={{ opacity: 0.8 }}>{iss.recommendation}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
             <div style={{ flex: 1, overflowY: 'auto' }}>

@@ -4,6 +4,7 @@ import keytar from 'keytar';
 import { initDatabase, markRunningCrawlsAsInterrupted, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks, updateLinkStatusCodes } from './database';
 import { checkExternalLinkStatuses } from './external-link-checker';
 import { analyzeGEOBatch } from './geo-analyzer';
+import { analyzeLlmsTxt } from './llms-txt';
 import { analyzePerformanceBatch } from './performance-analyzer';
 import { generatePdfReport } from './report-generator';
 import { CrawlOrchestrator } from './crawler-orchestrator';
@@ -1667,6 +1668,20 @@ ipcMain.handle(IPC.SITEMAP_GENERATE, async (_event, opts: SitemapGenerateOptions
 });
 
 // ─── Sitemap: analyze ─────────────────────────────────────────────────────────
+
+ipcMain.handle(IPC.LLMS_TXT_ANALYZE, async (_event, payload: { crawlId: string; siteUrl: string }) => {
+  if (!isSafeExternalUrl(payload.siteUrl)) {
+    return { error: 'Blocked: internal URL' };
+  }
+  try {
+    // Pages are optional — an empty crawl still yields structural validation,
+    // it just cannot report link coverage.
+    const pages = payload.crawlId ? getPagesByCrawl(payload.crawlId) : [];
+    return await analyzeLlmsTxt(payload.siteUrl, pages);
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+});
 
 ipcMain.handle(IPC.SITEMAP_ANALYZE, async (_event, payload: { crawlId: string; sitemapUrl: string }) => {
   try {

@@ -8,6 +8,7 @@ import { CrawlConfig, PageData, LinkData, ImageData } from '../types/index';
 import { CrawlResult, MAX_BODY_TEXT_CHARS } from './crawler-local';
 import { simhash64 } from './simhash';
 import { extractUncrawlableLinks } from './uncrawlable-links';
+import { auditAccessibility, countByImpact } from './accessibility';
 
 function normalizeUrlForComparison(url: string): string {
   try {
@@ -226,6 +227,10 @@ function buildResultFromHtml(
   const discoveredUrls: string[] = [];
   let uncrawlableOutlinks = 0;
   let bodyText: string | null = null;
+  let a11yScore: number | null = null;
+  let a11yCritical = 0;
+  let a11ySerious = 0;
+  let a11yViolations: string | null = null;
 
   let title: string | null = null;
   let titleLength: number | null = null;
@@ -267,6 +272,14 @@ function buildResultFromHtml(
   if (html) {
     const $ = cheerio.load(html);
     const AVG_CHAR_PX = 7.2;
+
+    // Same static WCAG pass as the local engine, so a page audited through
+    // Bright Data is comparable with one audited locally.
+    const a11y = auditAccessibility($);
+    a11yScore = a11y.score;
+    a11yCritical = countByImpact(a11y.violations, 'critical');
+    a11ySerious = countByImpact(a11y.violations, 'serious');
+    a11yViolations = a11y.violations.length > 0 ? JSON.stringify(a11y.violations) : null;
 
     if (config.extractTitles) {
       title = $('title').first().text().trim() || null;
@@ -527,6 +540,10 @@ function buildResultFromHtml(
     linkScore: 0,
     simhash,
     uncrawlableOutlinks,
+    a11yScore,
+    a11yCritical,
+    a11ySerious,
+    a11yViolations,
     bodyText,
   };
 

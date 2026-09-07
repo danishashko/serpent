@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('api', {
   gscGetStatus: () => ipcRenderer.invoke(IPC.GSC_GET_STATUS),
 
   // GEO/AEO
+  llmsTxtAnalyze: (payload: { crawlId: string; siteUrl: string }) => ipcRenderer.invoke(IPC.LLMS_TXT_ANALYZE, payload),
   geoAnalyze: (crawlId: string) => ipcRenderer.invoke(IPC.GEO_ANALYZE, crawlId),
   geoGetScores: (crawlId: string) => ipcRenderer.invoke(IPC.GEO_GET_SCORES, crawlId),
 

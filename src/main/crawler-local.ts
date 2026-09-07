@@ -8,6 +8,7 @@ import { PageData, LinkData, ImageData, CrawlConfig } from '../types/index';
 import { SimpleCookieJar } from './crawl-filters';
 import { simhash64 } from './simhash';
 import { extractUncrawlableLinks } from './uncrawlable-links';
+import { auditAccessibility, countByImpact } from './accessibility';
 
 // Approximate pixel widths per character (Arial 13px, common browser default)
 const AVG_CHAR_PX = 7.2;
@@ -374,6 +375,10 @@ export async function crawlPageLocal(
   const discoveredUrls: string[] = [];
   let uncrawlableOutlinks = 0;
   let storedBodyText: string | null = null;
+  let a11yScore: number | null = null;
+  let a11yCritical = 0;
+  let a11ySerious = 0;
+  let a11yViolations: string | null = null;
 
   // If the URL was redirected, record the redirect status code and skip content
   // parsing — the final destination's HTML belongs to a different URL.
@@ -441,6 +446,15 @@ export async function crawlPageLocal(
 
   if (html && isHTML) {
     const $ = cheerio.load(html);
+
+    // Static WCAG rules over the same parsed document. Not gated on a config
+    // flag: it needs no extra request and no render pass, so the cost is one
+    // pass over a tree that is already in memory.
+    const a11y = auditAccessibility($);
+    a11yScore = a11y.score;
+    a11yCritical = countByImpact(a11y.violations, 'critical');
+    a11ySerious = countByImpact(a11y.violations, 'serious');
+    a11yViolations = a11y.violations.length > 0 ? JSON.stringify(a11y.violations) : null;
 
     // Title
     if (config.extractTitles) {
@@ -730,6 +744,10 @@ export async function crawlPageLocal(
     linkScore: 0,
     simhash,
     uncrawlableOutlinks,
+    a11yScore,
+    a11yCritical,
+    a11ySerious,
+    a11yViolations,
     bodyText: storedBodyText,
   };
 

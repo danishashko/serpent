@@ -5,7 +5,7 @@ import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
 import { applyTheme, getThemePref, watchSystemTheme, type ThemePref } from './lib/theme';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore, EmbeddingStatus, EmbeddingRunConfig, SemanticAnalysis, SemanticNeighbourRow, ScheduleDiffSummary } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore, EmbeddingStatus, EmbeddingRunConfig, SemanticAnalysis, SemanticNeighbourRow, ScheduleDiffSummary, LlmsTxtResult } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -77,6 +77,7 @@ declare global {
       gscGetSites: () => Promise<string[]>;
       gscFetchData: (siteUrl: string) => Promise<GSCData>;
       gscGetStatus: () => Promise<boolean>;
+      llmsTxtAnalyze: (payload: { crawlId: string; siteUrl: string }) => Promise<LlmsTxtResult | { error: string }>;
       geoAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
       geoGetScores: (crawlId: string) => Promise<GEOScore[]>;
       perfAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;
