@@ -12,8 +12,42 @@ permissions:
   attestations: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  # Each platform builds and uploads an artifact. No job publishes a release:
+  # whichever finished first would create it, and the others would then reuse
+  # that release instead of the one carrying the notes. Publishing happens once,
+  # in the `release` job below.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            # CSC_IDENTITY_AUTO_DISCOVERY=false (below) is what stops the cert
+            # hunt. The --config.win.signAndEditExecutable flag is inert: the CLI
+            # yields the string "false" and winPackager tests === false.
+            args: --win
+            pattern: 'release/*.exe'
+            updater_yml: true
+          - os: macos-latest
+            name: macos-arm64
+            args: --mac --arm64
+            pattern: 'release/*.dmg'
+            updater_yml: false
+          # macos-13 was retired 4 Dec 2025. macos-15-intel is the last x86_64
+          # macOS image and goes away itself in Fall 2027.
+          - os: macos-15-intel
+            name: macos-x64
+            args: --mac --x64
+            pattern: 'release/*.dmg'
+            updater_yml: false
+          - os: ubuntu-latest
+            name: linux
+            args: --linux
+            pattern: 'release/*.AppImage'
+            updater_yml: true
+
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,30 +68,33 @@ jobs:
         run: npm run build
 
       # --publish never, and no GH_TOKEN: with a token in scope electron-builder
-      # creates its own GitHub release first, which the release step below then
+      # creates its own GitHub release first, which the release job below then
       # reuses instead of its own draft. That left the release body empty and
       # uploaded the installer twice under two different names.
       - name: Build installer (unsigned)
-        run: npx electron-builder --win --publish never --config.win.signAndEditExecutable=false
+        run: npx electron-builder ${{ matrix.args }} --publish never --config.win.signAndEditExecutable=false
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       # ──────────────────────────────────────────────
       # SignPath Code Signing (enable after approval)
       # ──────────────────────────────────────────────
-      # 1. Apply at https://signpath.io/apply
+      # SignPath signs Windows binaries only, so this stays scoped to that job.
+      # 1. Apply at https://signpath.org/apply
       # 2. Add SIGNPATH_API_TOKEN to GitHub Secrets
       # 3. Replace the org-id / project-slug / signing-policy-slug
-      # 4. Uncomment the two steps below
+      # 4. Uncomment the two steps below and drop the `if:` guard as needed
       #
       # - name: Upload unsigned artifact
       #   id: upload-unsigned
+      #   if: matrix.name == 'windows'
       #   uses: actions/upload-artifact@v4
       #   with:
       #     name: serpent-unsigned
       #     path: release/*.exe
       #
       # - name: Submit signing request
+      #   if: matrix.name == 'windows'
       #   uses: signpath/github-action-submit-signing-request@v2
       #   with:
       #     api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
@@ -68,72 +105,141 @@ jobs:
       #     wait-for-completion: true
       #     output-artifact-directory: release/signed
 
-      # Checksums and provenance run last so they cover the final binary.
-      # If SignPath is enabled above, point both at release/signed instead.
+      # electron-updater reads latest*.yml to find new versions. Windows and
+      # Linux each write exactly one, so they ship. macOS is deliberately
+      # excluded: the two arch jobs both write latest-mac.yml knowing only their
+      # own arch, so merging them into one release would leave half the users
+      # pointed at a build they cannot run. macOS auto-update also requires a
+      # signed app, which these are not.
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p dist-artifacts
+          cp ${{ matrix.pattern }} dist-artifacts/ 2>/dev/null || true
+          if [ "${{ matrix.updater_yml }}" = "true" ]; then
+            cp release/latest*.yml dist-artifacts/ 2>/dev/null || true
+          fi
+          ls -la dist-artifacts
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: serpent-${{ matrix.name }}
+          path: dist-artifacts/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      # download-artifact nests one directory per artifact name; flatten so the
+      # checksum file lists bare filenames the way `sha256sum -c` expects.
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find staging -type f -exec cp {} release/ \;
+          ls -la release
+
       - name: Generate checksums and verification notes
-        shell: pwsh
         env:
           IS_PUBLIC: ${{ github.event.repository.private == false }}
+          REPO: ${{ github.repository }}
         run: |
-          $installer = Get-ChildItem release -Filter *.exe -File | Select-Object -First 1
-          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
-          "$hash  $($installer.Name)" | Set-Content release/SHA256SUMS.txt -Encoding ascii
+          cd release
+          # Installers only — the latest*.yml metadata carries its own hashes.
+          find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' \) \
+            -printf '%f\n' | sort | xargs sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-          $notes = @(
-            '## Verify this download'
-            ''
-            'This installer is built by GitHub Actions directly from the tagged source in this repo. No local machine touches it.'
-            ''
-            '**SHA256**'
-            ''
-            '```'
-            "$hash  $($installer.Name)"
-            '```'
-            ''
-            '```powershell'
-            "Get-FileHash '.\$($installer.Name)' -Algorithm SHA256"
-            '```'
-            ''
-          )
+          {
+            echo '## Downloads'
+            echo
+            echo '| Platform | File |'
+            echo '|---|---|'
+            for f in *.exe; do [ -e "$f" ] && echo "| Windows | \`$f\` |"; done
+            for f in *.dmg; do
+              [ -e "$f" ] || continue
+              case "$f" in
+                *arm64*) echo "| macOS (Apple Silicon) | \`$f\` |" ;;
+                *) echo "| macOS (Intel) | \`$f\` |" ;;
+              esac
+            done
+            for f in *.AppImage; do [ -e "$f" ] && echo "| Linux | \`$f\` |"; done
+            echo
+            echo '## Verify this download'
+            echo
+            echo 'Every binary is built by GitHub Actions directly from the tagged source in this repo. No local machine touches it.'
+            echo
+            echo '**SHA256**'
+            echo
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+            echo
+            echo '```powershell'
+            echo "Get-FileHash '.\\<filename>' -Algorithm SHA256"
+            echo '```'
+            echo
+            echo '```bash'
+            echo 'sha256sum -c SHA256SUMS.txt'
+            echo '```'
+            echo
+          } > RELEASE_NOTES.md
 
-          # Attestations only exist once the repo is public (see the attest step below).
-          if ($env:IS_PUBLIC -eq 'true') {
-            $notes += @(
-              '**Build provenance**: confirm the binary was built from this repo and commit ([GitHub CLI](https://cli.github.com/) required).'
-              ''
-              '```'
-              "gh attestation verify '.\$($installer.Name)' --repo ${{ github.repository }}"
-              '```'
-              ''
-            )
-          }
+          # Attestations only exist once the repo is public (see the attest step).
+          if [ "$IS_PUBLIC" = "true" ]; then
+            {
+              echo '**Build provenance**: confirm a binary was built from this repo and commit ([GitHub CLI](https://cli.github.com/) required).'
+              echo
+              echo '```'
+              echo "gh attestation verify '<filename>' --repo $REPO"
+              echo '```'
+              echo
+            } >> RELEASE_NOTES.md
+          fi
 
           # SignPath requires the literal term "Code signing policy" on the
           # download/release pages as well as the project home page.
-          $notes += '## Code signing policy'
-          $notes += ''
-          $notes += 'Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).'
-          $notes += ''
-          $notes += 'Team roles and the full policy: [project README](https://github.com/${{ github.repository }}#code-signing-policy).'
-          $notes += ''
-          $notes += 'The SignPath Foundation application is pending, so this release is unsigned and Windows SmartScreen may warn on first run: **More info -> Run anyway**.'
-          $notes += ''
-          $notes | Set-Content release/RELEASE_NOTES.md -Encoding utf8
+          {
+            echo '## Code signing policy'
+            echo
+            echo 'Free code signing on Windows provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).'
+            echo
+            echo "Team roles and the full policy: [project README](https://github.com/$REPO#code-signing-policy)."
+            echo
+            echo 'The SignPath Foundation application is pending, so these builds are unsigned:'
+            echo
+            echo '- **Windows** — SmartScreen may warn on first run: **More info → Run anyway**.'
+            echo '- **macOS** — Gatekeeper will refuse to open the app: **right-click → Open**, then confirm. Or run `xattr -dr com.apple.quarantine /Applications/Serpent.app`.'
+            echo '- **Linux** — mark the AppImage executable with `chmod +x` before running.'
+            echo
+          } >> RELEASE_NOTES.md
 
-      # Artifact attestations need a public repo on Free/Pro/Team plans, so this
-      # is skipped while serpent is private and turns itself on at the OSS flip.
+          cat RELEASE_NOTES.md
+
+      # Artifact attestations need a public repo on Free/Pro/Team plans.
       - name: Attest build provenance
         if: github.event.repository.private == false
         uses: actions/attest@v4
         with:
-          subject-path: release/*.exe
+          subject-path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release/*.exe
-            release/latest.yml
+            release/*.dmg
+            release/*.AppImage
+            release/latest*.yml
             release/SHA256SUMS.txt
           body_path: release/RELEASE_NOTES.md
           generate_release_notes: true
