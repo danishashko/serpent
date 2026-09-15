@@ -285,6 +285,51 @@ describe('MCP HTTP server', () => {
     expect(data.truncated).toBe(true);
   });
 
+  it('get_issues gates all page-content checks for non-HTML resources (PDF/JPEG)', async () => {
+    const pages = [
+      {
+        // PDF: fields set so missing-title (critical), title-length, missing
+        // meta description, missing H1, missing OG image, no structured data
+        // and thin content would ALL fire without the content-type gate.
+        url: 'http://example.com/doc.pdf', statusCode: 200, contentType: 'application/pdf',
+        title: null, titleLength: 5, metaDescription: null, isIndexable: true,
+        h1: null, h1Count: 0, responseTimeMs: 100, canonicalUrl: null,
+        ogImage: null, hasStructuredData: false, wordCount: 50, h2Count: null,
+      },
+      {
+        // JPEG: otherwise-clean content, but h1Count > 1 and a long page with
+        // no H2 would trip multiple-H1 / no-H2-on-long-page without the gate.
+        url: 'http://example.com/photo.jpg', statusCode: 200, contentType: 'image/jpeg',
+        title: 'Photo', titleLength: 20, metaDescription: 'A description here that is fine.',
+        isIndexable: true, h1: 'Something', h1Count: 3, responseTimeMs: 100, canonicalUrl: null,
+        ogImage: 'https://example.com/og.png', hasStructuredData: true, wordCount: 600, h2Count: 0,
+      },
+    ];
+    vi.mocked(getPagesByCrawl).mockReturnValueOnce(pages as unknown as ReturnType<typeof getPagesByCrawl>);
+    const sessionId = await initSession();
+    const r = await callTool(sessionId, 'get_issues', { crawl_id: 'x' });
+    const data = JSON.parse(r.text) as {
+      critical_count: number;
+      issues: { critical: Array<{ details: string }>; warning: Array<{ details: string }>; info: Array<{ details: string }> };
+    };
+    expect(data.critical_count).toBe(0);
+    const allDetails = [...data.issues.critical, ...data.issues.warning, ...data.issues.info].map((i) => i.details);
+    const forbidden = [
+      'Missing title',
+      'Title length',
+      'Missing meta description',
+      'Missing H1',
+      'Multiple H1 tags',
+      'Missing OG image',
+      'No structured data',
+      'Thin content:',
+      'No H2 headings on a long page',
+    ];
+    for (const phrase of forbidden) {
+      expect(allDetails.some((detail) => detail.includes(phrase))).toBe(false);
+    }
+  });
+
   it('export_csv neutralizes spreadsheet formula injection in page fields', async () => {
     const pages = [{
       url: 'http://example.com/evil',

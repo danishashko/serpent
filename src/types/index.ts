@@ -137,6 +137,27 @@ export interface PageData {
   bodyText?: string | null;
 }
 
+// A PDF, image or other non-HTML resource returning HTTP 200 has no <title>,
+// no <h1>, no meta description — running on-page content checks against it
+// produces false positives ("Missing Title — major ranking signal" on a PDF).
+// This is the single gate every such check should sit behind.
+//
+// `contentType === null` is treated as HTML. On a 200 response the content
+// type is read straight off the response header and is essentially always
+// present (see crawler-local.ts). The null cases are redirects (nulled out
+// before this ever applies) and network errors (statusCode 0) — both are
+// already excluded wherever this helper is used, which is always behind a
+// `statusCode === 200` gate. So a null content-type on a 200 means the
+// server simply sent no Content-Type header, which is overwhelmingly HTML.
+// And the failure modes are asymmetric: treating null as non-HTML would
+// silently drop a real HTML page from every content check with no visible
+// signal, while a false positive here is visible and dismissible. Default
+// to auditing.
+export function isHtmlPage(p: { statusCode: number | null; contentType: string | null }): boolean {
+  if (p.contentType == null) return true;
+  return p.contentType.toLowerCase().includes('text/html');
+}
+
 /** Whether a link follows Google's crawlable-link guidance. */
 export type LinkCrawlability = 'crawlable' | 'uncrawlable';
 

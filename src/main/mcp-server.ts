@@ -9,6 +9,7 @@ import keytar from 'keytar';
 import { CrawlOrchestrator } from './crawler-orchestrator';
 import { getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl } from './database';
 import type { CrawlRecord, PageData, LinkData, ImageData } from '../types/index';
+import { isHtmlPage } from '../types/index';
 
 const KEYTAR_SERVICE = 'serpent';
 const MCP_PORT = 7777;
@@ -276,49 +277,53 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         // errors (4xx/5xx) have no body, so on-page content checks below would
         // be false positives ("Missing title" on a 301) — skip them for those.
         const is2xx = p.statusCode !== null && p.statusCode >= 200 && p.statusCode < 300;
+        // A non-HTML 200 (a PDF, an image) has no <title>/<h1>/meta/OG/schema
+        // either — same false-positive shape as a redirect/error, different
+        // cause. Gate the content checks on both.
+        const isHtml = isHtmlPage(p);
         if (p.statusCode !== null && p.statusCode >= 400) {
           issues.critical.push({ url: p.url, details: `HTTP ${p.statusCode}` });
         }
         // Soft 404: 200 response whose title/H1 reads like an error page.
         // Thin-content requirement keeps articles ABOUT 404s from matching.
         const notFoundRe = /not\s*found|\b404\b|(doesn'?t|does not|no longer) exist|no longer available/i;
-        if (p.statusCode === 200 && (notFoundRe.test(p.title ?? '') || notFoundRe.test(p.h1 ?? '')) && (p.wordCount ?? 0) < 300) {
+        if (p.statusCode === 200 && isHtml && (notFoundRe.test(p.title ?? '') || notFoundRe.test(p.h1 ?? '')) && (p.wordCount ?? 0) < 300) {
           issues.critical.push({ url: p.url, details: 'Soft 404 (200 status but "not found" content)' });
         }
-        if (is2xx && (!p.title || !p.title.trim())) {
+        if (is2xx && isHtml && (!p.title || !p.title.trim())) {
           issues.critical.push({ url: p.url, details: 'Missing title' });
         }
-        if (p.titleLength !== null && (p.titleLength < 10 || p.titleLength > 60)) {
+        if (isHtml && p.titleLength !== null && (p.titleLength < 10 || p.titleLength > 60)) {
           issues.warning.push({ url: p.url, details: `Title length ${p.titleLength} chars (ideal: 10-60)` });
         }
-        if (is2xx && (!p.metaDescription || !p.metaDescription.trim())) {
+        if (is2xx && isHtml && (!p.metaDescription || !p.metaDescription.trim())) {
           issues.warning.push({ url: p.url, details: 'Missing meta description' });
         }
         if (!p.isIndexable) {
           issues.warning.push({ url: p.url, details: 'Page marked as non-indexable' });
         }
-        if (is2xx && (!p.h1 || !p.h1.trim())) {
+        if (is2xx && isHtml && (!p.h1 || !p.h1.trim())) {
           issues.warning.push({ url: p.url, details: 'Missing H1' });
         }
-        if (p.h1Count > 1) {
+        if (isHtml && p.h1Count > 1) {
           issues.warning.push({ url: p.url, details: `Multiple H1 tags (${p.h1Count})` });
         }
         if (p.responseTimeMs !== null && p.responseTimeMs > 2000) {
           issues.warning.push({ url: p.url, details: `Slow response: ${p.responseTimeMs}ms` });
         }
-        if (p.canonicalUrl && p.canonicalUrl !== p.url) {
+        if (isHtml && p.canonicalUrl && p.canonicalUrl !== p.url) {
           issues.info.push({ url: p.url, details: `Canonicalized to ${p.canonicalUrl}` });
         }
-        if (is2xx && (!p.ogImage || !p.ogImage.trim())) {
+        if (is2xx && isHtml && (!p.ogImage || !p.ogImage.trim())) {
           issues.warning.push({ url: p.url, details: 'Missing OG image (og:image)' });
         }
-        if (is2xx && !p.hasStructuredData) {
+        if (is2xx && isHtml && !p.hasStructuredData) {
           issues.info.push({ url: p.url, details: 'No structured data (Schema.org)' });
         }
-        if (p.wordCount !== null && p.wordCount > 0 && p.wordCount < 300) {
+        if (isHtml && p.wordCount !== null && p.wordCount > 0 && p.wordCount < 300) {
           issues.warning.push({ url: p.url, details: `Thin content: only ${p.wordCount} words` });
         }
-        if (p.h2Count !== null && p.h2Count === 0 && p.wordCount !== null && p.wordCount > 500) {
+        if (isHtml && p.h2Count !== null && p.h2Count === 0 && p.wordCount !== null && p.wordCount > 500) {
           issues.info.push({ url: p.url, details: 'No H2 headings on a long page (affects readability/SEO)' });
         }
       }
@@ -326,7 +331,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       // Duplicate title detection
       const titleMap = new Map<string, string[]>();
       for (const p of pages) {
-        if (p.title && p.title.trim()) {
+        if (isHtmlPage(p) && p.title && p.title.trim()) {
           const t = p.title.trim().toLowerCase();
           if (!titleMap.has(t)) titleMap.set(t, []);
           titleMap.get(t)!.push(p.url);
@@ -341,7 +346,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       // Duplicate meta description detection
       const metaMap = new Map<string, string[]>();
       for (const p of pages) {
-        if (p.metaDescription && p.metaDescription.trim()) {
+        if (isHtmlPage(p) && p.metaDescription && p.metaDescription.trim()) {
           const m = p.metaDescription.trim().toLowerCase();
           if (!metaMap.has(m)) metaMap.set(m, []);
           metaMap.get(m)!.push(p.url);

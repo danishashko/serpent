@@ -19,6 +19,7 @@ import type {
   IssueSeverity,
   PageData,
 } from '../../types/index';
+import { isHtmlPage } from '../../types/index';
 import { hammingDistanceHex, NEAR_DUPLICATE_MAX_DISTANCE } from '../../main/simhash';
 
 // Configurable thresholds (mirror SF defaults).
@@ -38,6 +39,11 @@ export const HTML_MAX_BYTES = 2 * 1024 * 1024;
 
 interface Detector extends IssueDefinition {
   detect: (p: PageData, ctx: DetectContext) => boolean;
+  /** Bypasses the HTML-only category gate. Set this on a detector whose
+   *  category is HTML-only but whose signal is NOT derived from the page's
+   *  own parsed HTML (e.g. a graph-wide metric) — otherwise it would be
+   *  silently blinded for every non-HTML resource. */
+  anyContentType?: true;
 }
 
 export interface DetectContext {
@@ -55,6 +61,10 @@ export const SOFT_404_MAX_WORDS = 300;
 
 export function looksLikeSoft404(p: PageData): boolean {
   if (p.statusCode !== 200) return false;
+  // Belt-and-suspenders: a non-HTML 200 self-gates already (null title/h1
+  // never matches NOT_FOUND_RE), but this is a `critical` — make the guard
+  // explicit rather than relying on that coincidence.
+  if (!isHtmlPage(p)) return false;
   const textMatch = NOT_FOUND_RE.test(p.title ?? '') || NOT_FOUND_RE.test(p.h1 ?? '');
   return textMatch && (p.wordCount ?? 0) < SOFT_404_MAX_WORDS;
 }
@@ -202,9 +212,15 @@ export const DETECTORS: Detector[] = [
     (p) => !!p.schemaErrors && p.schemaErrors.trim() !== ''),
 
   // ── Links / Images (page-level proxies; per-row detail lives in the Images/Links tabs)
+  // linkScore is computed site-wide over the inbound link graph
+  // (calculateLinkScores in database.ts) from who links TO this page — it is
+  // not derived from this page's own parsed HTML. An orphaned/under-linked
+  // PDF is still a real finding, so this must not be blinded by the
+  // content-type gate the way the page-content checks in this category are.
   d('low_link_score', 'links', 'info', 'Low Internal Link Score',
     'Page receives few internal inlinks (linkScore < 10).',
-    (p) => p.statusCode === 200 && p.isIndexable && (p.linkScore ?? 0) < 10),
+    (p) => p.statusCode === 200 && p.isIndexable && (p.linkScore ?? 0) < 10,
+    true),
   d('uncrawlable_outlinks', 'links', 'warning', 'Pages With Uncrawlable Internal Outlinks',
     'Page links internally with markup search engines cannot reliably follow — an href on a non-anchor element, a javascript: href, or an onclick handler with no href.',
     (p) => (p.uncrawlableOutlinks ?? 0) > 0),
@@ -228,12 +244,32 @@ export const DETECTORS: Detector[] = [
 
 // ─── Public computeIssues() ───────────────────────────────────────────────────
 
+// Non-HTML resources (a PDF, an image) returning HTTP 200 have no <title>,
+// <h1>, meta description, OG tags, structured data, or body text — running
+// these categories' checks against them produces false positives ("Missing
+// Title" on a PDF). response_codes / urls / security apply to any resource
+// regardless of content type, so they stay ungated.
+const HTML_ONLY_CATEGORIES: ReadonlySet<IssueCategory> = new Set<IssueCategory>([
+  'page_titles',
+  'meta_description',
+  'headings',
+  'canonicals',
+  'directives',
+  'content',
+  'social',
+  'structured_data',
+  'links',
+  'images',
+  'accessibility',
+]);
+
 export function computeIssues(pages: PageData[]): IssueInstance[] {
   const ctx = buildContext(pages);
   const out: IssueInstance[] = [];
   for (const det of DETECTORS) {
     const affected: string[] = [];
     for (const p of pages) {
+      if (HTML_ONLY_CATEGORIES.has(det.category) && !det.anyContentType && !isHtmlPage(p)) continue;
       try {
         if (det.detect(p, ctx)) affected.push(p.url);
       } catch {
@@ -299,8 +335,9 @@ function d(
   title: string,
   description: string,
   detect: Detector['detect'],
+  anyContentType?: true,
 ): Detector {
-  return { id, category, severity, title, description, detect };
+  return { id, category, severity, title, description, detect, anyContentType };
 }
 
 function safePath(url: string): string {
@@ -317,7 +354,7 @@ function buildContext(pages: PageData[]): DetectContext {
   const h1Map = new Map<string, string[]>();
   const hashMap = new Map<string, string[]>();
   for (const p of pages) {
-    if (p.statusCode !== 200 || !p.isIndexable) continue;
+    if (p.statusCode !== 200 || !p.isIndexable || !isHtmlPage(p)) continue;
     if (p.title) push(titleMap, p.title.trim().toLowerCase(), p.url);
     if (p.metaDescription) push(metaMap, p.metaDescription.trim().toLowerCase(), p.url);
     if (p.h1) push(h1Map, p.h1.trim().toLowerCase(), p.url);

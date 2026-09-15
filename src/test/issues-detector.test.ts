@@ -179,4 +179,87 @@ describe('issues-detector', () => {
       expect(categoryLabel(c).length).toBeGreaterThan(0);
     }
   });
+
+  it('gates HTML-only categories off a non-HTML resource (PDF)', () => {
+    const pdf = page({
+      url: 'https://example.com/doc.pdf',
+      contentType: 'application/pdf',
+      title: null, titleLength: null,
+      h1: null, h1Count: 0,
+      metaDescription: null, metaDescLength: null,
+      ogImage: null,
+      hasStructuredData: false,
+    });
+    const issues = computeIssues([pdf]);
+    expect(findIssue(issues, 'missing_title')).toBeUndefined();
+    expect(findIssue(issues, 'missing_h1')).toBeUndefined();
+    expect(findIssue(issues, 'missing_meta_description')).toBeUndefined();
+    expect(findIssue(issues, 'missing_og_image')).toBeUndefined();
+    expect(findIssue(issues, 'missing_structured_data')).toBeUndefined();
+  });
+
+  it('still runs universal checks (url_too_long) on a gated non-HTML resource', () => {
+    const longUrl = 'https://example.com/' + 'a'.repeat(120) + '.pdf';
+    const pdf = page({
+      url: longUrl,
+      contentType: 'application/pdf',
+      title: null, titleLength: null,
+    });
+    const issues = computeIssues([pdf]);
+    expect(findIssue(issues, 'url_too_long')?.affectedUrls).toContain(longUrl);
+  });
+
+  it('gates HTML-only categories off a JPEG the same way as a PDF', () => {
+    const jpeg = page({
+      url: 'https://example.com/photo.jpg',
+      contentType: 'image/jpeg',
+      title: null, titleLength: null,
+      h1: null, h1Count: 0,
+      metaDescription: null, metaDescLength: null,
+      ogImage: null,
+      hasStructuredData: false,
+    });
+    const issues = computeIssues([jpeg]);
+    expect(findIssue(issues, 'missing_title')).toBeUndefined();
+  });
+
+  it('still fully audits an HTML page with a charset suffix and mixed-case content-type', () => {
+    const html = page({
+      url: 'https://example.com/mixed-case',
+      contentType: 'Text/HTML; charset=UTF-8',
+      title: null, titleLength: null,
+    });
+    const issues = computeIssues([html]);
+    expect(findIssue(issues, 'missing_title')?.affectedUrls).toContain('https://example.com/mixed-case');
+  });
+
+  it('treats a null content-type on a 200 as HTML and still audits it', () => {
+    const nullCt = page({
+      url: 'https://example.com/no-content-type',
+      contentType: null,
+      title: null, titleLength: null,
+    });
+    const issues = computeIssues([nullCt]);
+    expect(findIssue(issues, 'missing_title')?.affectedUrls).toContain('https://example.com/no-content-type');
+  });
+
+  it('still flags low_link_score on a non-HTML resource (linkScore is inbound, not content-derived)', () => {
+    const pdf = page({
+      url: 'https://example.com/report.pdf',
+      contentType: 'application/pdf',
+      title: null, titleLength: null,
+      linkScore: 3,
+    });
+    const issues = computeIssues([pdf]);
+    expect(findIssue(issues, 'low_link_score')?.affectedUrls).toContain('https://example.com/report.pdf');
+  });
+
+  it('does not flag two identical JPEGs as duplicate content', () => {
+    const pages = [
+      page({ url: 'https://example.com/a.jpg', contentType: 'image/jpeg', contentHash: 'dup-img' }),
+      page({ url: 'https://example.com/b.jpg', contentType: 'image/jpeg', contentHash: 'dup-img' }),
+    ];
+    const issues = computeIssues(pages);
+    expect(findIssue(issues, 'duplicate_content')).toBeUndefined();
+  });
 });
