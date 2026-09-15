@@ -20,6 +20,13 @@ const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 // Cap on stored body text. Embedding models truncate well before this anyway.
 export const MAX_BODY_TEXT_CHARS = 10000;
 
+// Attribute precedence for resolving an <img>'s real URL. Lazy-load plugins
+// (WP Rocket, lazysizes, jQuery Lazy Load) put an inert placeholder in `src`
+// and the real URL in one of these — but a legacy/misconfigured setup can
+// reverse that, so each candidate is tried in order and skipped if it
+// resolves to a data: URI rather than committing to the first one present.
+const IMAGE_SRC_ATTRS = ['data-lazy-src', 'data-src', 'data-original', 'src'];
+
 export const DEFAULT_USER_AGENT = 'Serpent/1.0 (SEO Crawler; +https://github.com/danishashko/serpent)';
 
 /**
@@ -573,27 +580,32 @@ export async function crawlPageLocal(
     // Images
     if (config.extractImages) {
       $('img').each((_i, el) => {
-        const src = $(el).attr('src')?.trim();
-        if (!src) return;
-        try {
-          const resolvedSrc = new URL(src, url).toString();
-          const imgSrc = resolvedSrc;
-          const ext = imgSrc.split('.').pop()?.split('?')[0]?.toLowerCase() ?? null;
-          const format = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'avif', 'ico', 'bmp', 'tiff'].includes(ext ?? '') ? ext : null;
-          images.push({
-            id: uuidv4(),
-            crawlId,
-            pageUrl: url,
-            imageUrl: resolvedSrc,
-            altText: $(el).attr('alt') ?? null,
-            format,
-            hasWidth: !!$(el).attr('width'),
-            hasHeight: !!$(el).attr('height'),
-            isLazy: $(el).attr('loading') === 'lazy',
-          });
-        } catch {
-          // Skip invalid image URLs
+        let resolvedSrc: string | null = null;
+        for (const attr of IMAGE_SRC_ATTRS) {
+          const raw = $(el).attr(attr)?.trim();
+          if (!raw) continue;
+          try {
+            const candidate = new URL(raw, url).toString();
+            if (!candidate.startsWith('data:')) { resolvedSrc = candidate; break; }
+          } catch {
+            // invalid URL in this candidate — try the next one
+          }
         }
+        if (!resolvedSrc) return; // every candidate was missing, invalid, or a data: URI
+        const imgSrc = resolvedSrc;
+        const ext = imgSrc.split('.').pop()?.split('?')[0]?.toLowerCase() ?? null;
+        const format = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'avif', 'ico', 'bmp', 'tiff'].includes(ext ?? '') ? ext : null;
+        images.push({
+          id: uuidv4(),
+          crawlId,
+          pageUrl: url,
+          imageUrl: resolvedSrc,
+          altText: $(el).attr('alt') ?? null,
+          format,
+          hasWidth: !!$(el).attr('width'),
+          hasHeight: !!$(el).attr('height'),
+          isLazy: $(el).attr('loading') === 'lazy',
+        });
       });
     }
 

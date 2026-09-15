@@ -21,6 +21,13 @@ function normalizeUrlForComparison(url: string): string {
   }
 }
 
+// Attribute precedence for resolving an <img>'s real URL. Lazy-load plugins
+// (WP Rocket, lazysizes, jQuery Lazy Load) put an inert placeholder in `src`
+// and the real URL in one of these — but a legacy/misconfigured setup can
+// reverse that, so each candidate is tried in order and skipped if it
+// resolves to a data: URI rather than committing to the first one present.
+const IMAGE_SRC_ATTRS = ['data-lazy-src', 'data-src', 'data-original', 'src'];
+
 const BD_ENDPOINT = 'https://api.brightdata.com/request';
 
 // Cache zone password to avoid hitting BD API on every request
@@ -366,25 +373,31 @@ function buildResultFromHtml(
 
     if (config.extractImages) {
       $('img').each((_i, el) => {
-        const src = $(el).attr('src')?.trim();
-        if (!src) return;
-        try {
-          const imgSrc = new URL(src, url).toString();
-          const ext = imgSrc.split('.').pop()?.split('?')[0]?.toLowerCase() ?? '';
-          images.push({
-            id: uuidv4(),
-            crawlId,
-            pageUrl: url,
-            imageUrl: imgSrc,
-            altText: $(el).attr('alt') ?? null,
-            format: ['jpg','jpeg','png','gif','webp','avif','svg','bmp','ico'].includes(ext) ? ext : null,
-            hasWidth: !!$(el).attr('width'),
-            hasHeight: !!$(el).attr('height'),
-            isLazy: $(el).attr('loading') === 'lazy',
-          });
-        } catch {
-          // skip
+        let resolvedSrc: string | null = null;
+        for (const attr of IMAGE_SRC_ATTRS) {
+          const raw = $(el).attr(attr)?.trim();
+          if (!raw) continue;
+          try {
+            const candidate = new URL(raw, url).toString();
+            if (!candidate.startsWith('data:')) { resolvedSrc = candidate; break; }
+          } catch {
+            // invalid URL in this candidate — try the next one
+          }
         }
+        if (!resolvedSrc) return; // every candidate was missing, invalid, or a data: URI
+        const imgSrc = resolvedSrc;
+        const ext = imgSrc.split('.').pop()?.split('?')[0]?.toLowerCase() ?? '';
+        images.push({
+          id: uuidv4(),
+          crawlId,
+          pageUrl: url,
+          imageUrl: imgSrc,
+          altText: $(el).attr('alt') ?? null,
+          format: ['jpg','jpeg','png','gif','webp','avif','svg','bmp','ico'].includes(ext) ? ext : null,
+          hasWidth: !!$(el).attr('width'),
+          hasHeight: !!$(el).attr('height'),
+          isLazy: $(el).attr('loading') === 'lazy',
+        });
       });
     }
 

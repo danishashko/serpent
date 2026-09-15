@@ -333,6 +333,127 @@ describe('crawlPageLocal', () => {
     });
   });
 
+  describe('lazy-loaded image src fallback', () => {
+    it('resolves the real URL and alt text from data-lazy-src when src is a WP Rocket data: placeholder', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img src="data:image/svg+xml,%3Csvg%20xmlns=\'http://www.w3.org/2000/svg\'%3E%3C/svg%3E" ' +
+        'data-lazy-src="https://example.com/real-image.jpg" alt="A real alt text" width="800" height="600">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/real-image.jpg');
+      expect(images[0].altText).toBe('A real alt text');
+    });
+
+    it('falls back to data-src when data-lazy-src is absent', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" ' +
+        'data-src="/data-src-image.jpg" alt="lazysizes img">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/data-src-image.jpg');
+    });
+
+    it('falls back to data-original when neither data-lazy-src nor data-src is present', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" ' +
+        'data-original="/data-original-image.jpg" alt="old jQuery Lazy Load img">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/data-original-image.jpg');
+    });
+
+    it('prefers data-lazy-src over data-src when both are present', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img src="data:image/gif;base64,xxx" ' +
+        'data-lazy-src="https://example.com/lazy-src-wins.jpg" ' +
+        'data-src="https://example.com/should-not-use-this.jpg" alt="precedence">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/lazy-src-wins.jpg');
+    });
+
+    it('leaves a plain img with only src unchanged, resolved against the page URL', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img src="/photo.jpg" alt="plain img">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/photo.jpg');
+    });
+
+    it('resolves a relative data-lazy-src URL against the page URL', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img src="data:image/gif;base64,xxx" data-lazy-src="relative-lazy.jpg" alt="relative">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/blog/post', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/blog/relative-lazy.jpg');
+    });
+
+    it('produces no image row when the only source is a data: URI', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img src="data:image/svg+xml,%3Csvg%20xmlns=\'http://www.w3.org/2000/svg\'%3E%3C/svg%3E" alt="placeholder only">' +
+        '<img src="/kept.jpg" alt="kept">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/kept.jpg');
+    });
+
+    it('derives format from the resolved data-lazy-src URL, not the data: placeholder', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" data-lazy-src="https://example.com/real-hero.webp" alt="hero">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].format).toBe('webp');
+    });
+
+    it('falls through a data: data-lazy-src to a real src when the placeholder is in the wrong attribute', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img data-lazy-src="data:image/gif;base64,xxx" src="/real-fallback.jpg" alt="reversed setup">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/real-fallback.jpg');
+    });
+
+    it('falls through a data: data-lazy-src to a real data-src', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img data-lazy-src="data:image/gif;base64,xxx" data-src="/real.jpg" alt="reversed setup">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/real.jpg');
+    });
+
+    it('produces no image row when every candidate attribute is a data: URI', async () => {
+      mockResponse('<html><head><title>T</title></head><body>' +
+        '<img data-lazy-src="data:image/gif;base64,aaa" data-src="data:image/gif;base64,bbb" ' +
+        'data-original="data:image/gif;base64,ccc" src="data:image/gif;base64,ddd" alt="all placeholders">' +
+        '<img src="/kept.jpg" alt="kept">' +
+        '</body></html>');
+      const { images } = await crawlPageLocal('https://example.com/page', crawlId, 0, BASE_CONFIG, baseOrigin);
+
+      expect(images).toHaveLength(1);
+      expect(images[0].imageUrl).toBe('https://example.com/kept.jpg');
+    });
+  });
+
   describe('network error handling', () => {
     it('captures statusCode 0 and empty data on network timeout', async () => {
       axiosMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
