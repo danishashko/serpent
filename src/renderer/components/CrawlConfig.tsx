@@ -69,6 +69,11 @@ export default function CrawlConfig({
     value: CrawlConfigType[K],
   ) => setConfig((c) => ({ ...c, [key]: value }));
 
+  const setFn = <K extends keyof CrawlConfigType>(
+    key: K,
+    fn: (prev: CrawlConfigType[K]) => CrawlConfigType[K],
+  ) => setConfig((c) => ({ ...c, [key]: fn(c[key]) }));
+
   const [isStarting, setIsStarting] = useState(false);
 
   const handleFileLoad = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -698,9 +703,11 @@ export default function CrawlConfig({
               placeholder="Name"
               value={rule.name}
               onChange={(e) => {
-                const rules = [...(config.customExtractions ?? [])];
-                rules[i] = { ...rules[i], name: e.target.value };
-                set("customExtractions", rules);
+                setFn("customExtractions", (prev) => {
+                  const rules = [...(prev ?? [])];
+                  rules[i] = { ...rules[i], name: e.target.value };
+                  return rules;
+                });
               }}
               disabled={busy}
             />
@@ -715,9 +722,11 @@ export default function CrawlConfig({
               placeholder="CSS selector (e.g. h2.price)"
               value={rule.selector}
               onChange={(e) => {
-                const rules = [...(config.customExtractions ?? [])];
-                rules[i] = { ...rules[i], selector: e.target.value };
-                set("customExtractions", rules);
+                setFn("customExtractions", (prev) => {
+                  const rules = [...(prev ?? [])];
+                  rules[i] = { ...rules[i], selector: e.target.value };
+                  return rules;
+                });
               }}
               disabled={busy}
             />
@@ -729,10 +738,10 @@ export default function CrawlConfig({
                 color: "var(--accent-red)",
               }}
               onClick={() => {
-                const rules = (config.customExtractions ?? []).filter(
-                  (_, j) => j !== i,
-                );
-                set("customExtractions", rules.length ? rules : undefined);
+                setFn("customExtractions", (prev) => {
+                  const rules = (prev ?? []).filter((_, j) => j !== i);
+                  return rules.length ? rules : undefined;
+                });
               }}
               disabled={busy}
             >
@@ -744,11 +753,10 @@ export default function CrawlConfig({
           className="btn-ghost"
           style={{ fontSize: 11, padding: "3px 10px", marginTop: 2 }}
           onClick={() => {
-            const rules = [
-              ...(config.customExtractions ?? []),
+            setFn("customExtractions", (prev) => [
+              ...(prev ?? []),
               { name: "", selector: "" },
-            ];
-            set("customExtractions", rules);
+            ]);
           }}
           disabled={busy}
         >
@@ -757,7 +765,7 @@ export default function CrawlConfig({
       </div>
 
       {/* Advanced crawl behavior */}
-      <AdvancedSection config={config} set={set} busy={busy} />
+      <AdvancedSection config={config} set={set} setFn={setFn} busy={busy} />
       </div>
 
       {/* Action buttons — pinned, so Start (and Stop mid-crawl) never scroll away */}
@@ -827,12 +835,17 @@ interface AdvancedProps {
     key: K,
     value: CrawlConfigType[K],
   ) => void;
+  setFn: <K extends keyof CrawlConfigType>(
+    key: K,
+    fn: (prev: CrawlConfigType[K]) => CrawlConfigType[K],
+  ) => void;
   busy: boolean;
 }
 
 function AdvancedSection({
   config,
   set,
+  setFn,
   busy,
 }: AdvancedProps): React.ReactElement {
   const presetMatch = UA_PRESETS.find(
@@ -1073,9 +1086,11 @@ function AdvancedSection({
                 placeholder="X-Header-Name"
                 value={h.name}
                 onChange={(e) => {
-                  const headers = [...(config.customHeaders ?? [])];
-                  headers[i] = { ...headers[i], name: e.target.value };
-                  set("customHeaders", headers);
+                  setFn("customHeaders", (prev) => {
+                    const headers = [...(prev ?? [])];
+                    headers[i] = { ...headers[i], name: e.target.value };
+                    return headers;
+                  });
                 }}
                 disabled={busy}
               />
@@ -1091,9 +1106,11 @@ function AdvancedSection({
                 placeholder="value"
                 value={h.value}
                 onChange={(e) => {
-                  const headers = [...(config.customHeaders ?? [])];
-                  headers[i] = { ...headers[i], value: e.target.value };
-                  set("customHeaders", headers);
+                  setFn("customHeaders", (prev) => {
+                    const headers = [...(prev ?? [])];
+                    headers[i] = { ...headers[i], value: e.target.value };
+                    return headers;
+                  });
                 }}
                 disabled={busy}
               />
@@ -1106,10 +1123,10 @@ function AdvancedSection({
                   color: "var(--accent-red)",
                 }}
                 onClick={() => {
-                  const headers = (config.customHeaders ?? []).filter(
-                    (_, j) => j !== i,
-                  );
-                  set("customHeaders", headers.length ? headers : undefined);
+                  setFn("customHeaders", (prev) => {
+                    const headers = (prev ?? []).filter((_, j) => j !== i);
+                    return headers.length ? headers : undefined;
+                  });
                 }}
                 disabled={busy}
               >
@@ -1122,8 +1139,8 @@ function AdvancedSection({
             data-testid="adv-header-add"
             style={{ fontSize: 11, padding: "3px 10px", marginTop: 2 }}
             onClick={() =>
-              set("customHeaders", [
-                ...(config.customHeaders ?? []),
+              setFn("customHeaders", (prev) => [
+                ...(prev ?? []),
                 { name: "", value: "" },
               ])
             }

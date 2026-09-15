@@ -292,6 +292,12 @@ export default function App(): React.ReactElement {
     setContentGaps([]);
   };
 
+  const handleOpenCrawl = async (crawlId: string) => {
+    await loadCrawlData(crawlId);
+    setActiveCrawlId(crawlId);
+    setView('crawl');
+  };
+
   const handleSerpQuery = async (keywords: string[], location?: string, device?: 'desktop' | 'mobile') => {
     if (!activeCrawlId) return;
     setSerpLoading(true);
@@ -547,7 +553,7 @@ export default function App(): React.ReactElement {
             </div>
           </div>
         ) : (
-          <Settings showToast={showToast} />
+          <Settings showToast={showToast} onOpenCrawl={handleOpenCrawl} />
         )}
       </div>
 

@@ -180,6 +180,10 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<string>('url');
   const [sortAsc, setSortAsc] = useState(true);
+  const [geoSortKey, setGeoSortKey] = useState<string>('overallScore');
+  const [geoSortAsc, setGeoSortAsc] = useState(true);
+  const [perfSortKey, setPerfSortKey] = useState<string>('overallScore');
+  const [perfSortAsc, setPerfSortAsc] = useState(true);
   const [serpKeywords, setSerpKeywords] = useState('');
   const [serpLocation, setSerpLocation] = useState('United States');
   const [serpDevice, setSerpDevice] = useState<'desktop' | 'mobile'>('desktop');
@@ -252,6 +256,16 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
   const handleSort = (key: string) => {
     if (sortKey === key) setSortAsc(a => !a);
     else { setSortKey(key); setSortAsc(true); }
+  };
+
+  const handleGeoSort = (key: string) => {
+    if (geoSortKey === key) setGeoSortAsc(a => !a);
+    else { setGeoSortKey(key); setGeoSortAsc(true); }
+  };
+
+  const handlePerfSort = (key: string) => {
+    if (perfSortKey === key) setPerfSortAsc(a => !a);
+    else { setPerfSortKey(key); setPerfSortAsc(true); }
   };
 
   const titleCounts = useMemo(() => {
@@ -621,6 +635,26 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     </th>
   );
 
+  const GeoTh = ({ label, sortable, field }: { label: string; sortable?: boolean; field?: string }) => (
+    <th
+      onClick={sortable && field ? () => handleGeoSort(field) : undefined}
+      style={{ cursor: sortable ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}
+    >
+      {label}
+      {sortable && field === geoSortKey && (geoSortAsc ? ' ▲' : ' ▼')}
+    </th>
+  );
+
+  const PerfTh = ({ label, sortable, field }: { label: string; sortable?: boolean; field?: string }) => (
+    <th
+      onClick={sortable && field ? () => handlePerfSort(field) : undefined}
+      style={{ cursor: sortable ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}
+    >
+      {label}
+      {sortable && field === perfSortKey && (perfSortAsc ? ' ▲' : ' ▼')}
+    </th>
+  );
+
   const tabs: Tab[] = ['pages', 'links', 'images', 'issues_v2', 'issues', 'sitemap', 'semantic', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf', 'competitors', 'content_gaps'];
 
   // Label and count are separate so the count can be de-emphasised and the
@@ -684,13 +718,15 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         borderBottom: '1px solid var(--border)',
         flexShrink: 0,
       }}>
-        <input
-          className="input"
-          style={{ width: 220, padding: '3px 8px', fontSize: 12, flexShrink: 0 }}
-          placeholder="Filter…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+        {!(['map', 'issues_v2', 'sitemap', 'semantic'] as Tab[]).includes(tab) && (
+          <input
+            className="input"
+            style={{ width: 220, padding: '3px 8px', fontSize: 12, flexShrink: 0 }}
+            placeholder="Filter…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        )}
         <div style={{ flex: 1 }} />
         {crawlId && (
           <div style={{ display: 'flex', gap: 4 }}>
@@ -1426,19 +1462,27 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>URL</th>
-                    <th>Overall</th>
-                    <th>Entity Clarity</th>
-                    <th>Answer Ready</th>
-                    <th>Citation</th>
-                    <th>Structured Data</th>
+                    <GeoTh label="URL" sortable field="url" />
+                    <GeoTh label="Overall" sortable field="overallScore" />
+                    <GeoTh label="Entity Clarity" sortable field="entityClarity" />
+                    <GeoTh label="Answer Ready" sortable field="answerReadiness" />
+                    <GeoTh label="Citation" sortable field="citationSignals" />
+                    <GeoTh label="Structured Data" sortable field="structuredDataCompleteness" />
                     <th>Issues</th>
                   </tr>
                 </thead>
                 <tbody>
                   {geoScores.length === 0 ? (
                     <tr><td colSpan={7} className="table-empty">Click "Run GEO/AEO Analysis" to score pages</td></tr>
-                  ) : [...geoScores].sort((a, b) => a.overallScore - b.overallScore).map(g => (
+                  ) : [...geoScores]
+                      .filter(g => !search || g.url.toLowerCase().includes(search.toLowerCase()))
+                      .sort((a, b) => {
+                        const av = (a as unknown as Record<string, unknown>)[geoSortKey] ?? '';
+                        const bv = (b as unknown as Record<string, unknown>)[geoSortKey] ?? '';
+                        const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv), undefined, { numeric: true });
+                        return geoSortAsc ? cmp : -cmp;
+                      })
+                      .map(g => (
                     <tr key={g.pageId}>
                       <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <a href={g.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{g.url}</a>
@@ -1509,21 +1553,29 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>URL</th>
-                    <th>Overall</th>
-                    <th>TTFB</th>
-                    <th>Page Size</th>
-                    <th>Image Opt</th>
-                    <th>Content Eff</th>
-                    <th>TTFB (ms)</th>
-                    <th>Size (KB)</th>
+                    <PerfTh label="URL" sortable field="url" />
+                    <PerfTh label="Overall" sortable field="overallScore" />
+                    <PerfTh label="TTFB" sortable field="ttfbScore" />
+                    <PerfTh label="Page Size" sortable field="pageSizeScore" />
+                    <PerfTh label="Image Opt" sortable field="imageOptScore" />
+                    <PerfTh label="Content Eff" sortable field="contentEfficiency" />
+                    <PerfTh label="TTFB (ms)" sortable field="ttfbMs" />
+                    <PerfTh label="Size (KB)" sortable field="totalBytes" />
                     <th>Issues</th>
                   </tr>
                 </thead>
                 <tbody>
                   {perfScores.length === 0 ? (
                     <tr><td colSpan={9} className="table-empty">Click "Run Performance Analysis" to score pages</td></tr>
-                  ) : [...perfScores].sort((a, b) => a.overallScore - b.overallScore).map(p => (
+                  ) : [...perfScores]
+                      .filter(p => !search || p.url.toLowerCase().includes(search.toLowerCase()))
+                      .sort((a, b) => {
+                        const av = (a as unknown as Record<string, unknown>)[perfSortKey] ?? '';
+                        const bv = (b as unknown as Record<string, unknown>)[perfSortKey] ?? '';
+                        const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv), undefined, { numeric: true });
+                        return perfSortAsc ? cmp : -cmp;
+                      })
+                      .map(p => (
                     <tr key={p.pageId}>
                       <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <a href={p.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{p.url}</a>
@@ -1805,7 +1857,9 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <tbody>
                   {discoverResults.length === 0 ? (
                     <tr><td colSpan={5} className="table-empty">Enter your domain and target keywords above to discover competitors</td></tr>
-                  ) : [...discoverResults].sort((a, b) => b.relevanceScore - a.relevanceScore).map((r, i) => (
+                  ) : [...discoverResults]
+                      .filter(r => !search || r.link.toLowerCase().includes(search.toLowerCase()) || (r.title ?? '').toLowerCase().includes(search.toLowerCase()))
+                      .sort((a, b) => b.relevanceScore - a.relevanceScore).map((r, i) => (
                     <tr key={i}>
                       <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <a href={r.link} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{r.link}</a>
@@ -1898,10 +1952,12 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <tbody>
                   {contentGaps.length === 0 ? (
                     <tr><td colSpan={7} className="table-empty">Enter topics above to analyze content gaps against competitors</td></tr>
-                  ) : [...contentGaps].sort((a, b) => {
-                    const order = { high: 0, medium: 1, low: 2, none: 3 };
-                    return (order[a.gapSeverity] ?? 4) - (order[b.gapSeverity] ?? 4);
-                  }).map((g, i) => (
+                  ) : [...contentGaps]
+                      .filter(g => !search || g.topic.toLowerCase().includes(search.toLowerCase()))
+                      .sort((a, b) => {
+                        const order = { high: 0, medium: 1, low: 2, none: 3 };
+                        return (order[a.gapSeverity] ?? 4) - (order[b.gapSeverity] ?? 4);
+                      }).map((g, i) => (
                     <tr key={i}>
                       <td style={{ fontWeight: 500 }}>{g.topic}</td>
                       <td>

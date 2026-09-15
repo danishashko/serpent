@@ -14,6 +14,7 @@ const SETTINGS_SECTIONS: { id: string; label: string }[] = [
 
 interface Props {
   showToast: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
+  onOpenCrawl?: (crawlId: string) => Promise<void>;
 }
 
 const defaultSettings: AppSettings = {
@@ -49,7 +50,7 @@ const AI_PROVIDERS: { value: AIProvider; label: string; icon: string }[] = [
   { value: 'openrouter', label: 'OpenRouter', icon: '🔀' },
 ];
 
-export default function Settings({ showToast }: Props): React.ReactElement {
+export default function Settings({ showToast, onOpenCrawl }: Props): React.ReactElement {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -537,6 +538,7 @@ export default function Settings({ showToast }: Props): React.ReactElement {
         showToast={showToast}
         retentionDays={settings.crawlRetentionDays ?? 0}
         onRetentionChange={days => set('crawlRetentionDays', days)}
+        onOpenCrawl={onOpenCrawl}
       />
 
           </div>
@@ -735,11 +737,13 @@ const RETENTION_OPTIONS = [
 interface RetentionProps extends Props {
   retentionDays: number;
   onRetentionChange: (days: number) => void;
+  onOpenCrawl?: (crawlId: string) => Promise<void>;
 }
 
-function CrawlRetentionSection({ showToast, retentionDays, onRetentionChange }: RetentionProps): React.ReactElement {
+function CrawlRetentionSection({ showToast, retentionDays, onRetentionChange, onOpenCrawl }: RetentionProps): React.ReactElement {
   const [crawls, setCrawls] = useState<CrawlRecord[]>([]);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
@@ -816,6 +820,20 @@ function CrawlRetentionSection({ showToast, retentionDays, onRetentionChange }: 
                   {fmtDate(c.startTime)} · {c.completedUrls} URLs · {c.status}
                 </div>
               </div>
+              {onOpenCrawl && (
+                <button
+                  className="btn-ghost"
+                  data-testid="crawl-open"
+                  style={{ padding: '2px 8px', fontSize: 11 }}
+                  disabled={openingId === c.id}
+                  onClick={async () => {
+                    setOpeningId(c.id);
+                    try { await onOpenCrawl(c.id); } finally { setOpeningId(null); }
+                  }}
+                >
+                  {openingId === c.id ? '⏳' : '▶ Open'}
+                </button>
+              )}
               <button
                 className="btn-ghost"
                 data-testid="crawl-delete"

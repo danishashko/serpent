@@ -1199,7 +1199,7 @@ ipcMain.handle(IPC.GSC_GET_STATUS, async () => {
 
 ipcMain.handle(IPC.GEO_ANALYZE, async (_event, crawlId: string) => {
   try {
-    const pages = getPagesByCrawl(crawlId);
+    const pages = getPagesByCrawl(crawlId).filter(p => p.statusCode === 200);
     const links = getLinksByCrawl(crawlId);
     const images = getImagesByCrawl(crawlId);
     const scores = analyzeGEOBatch(pages, links, images);
