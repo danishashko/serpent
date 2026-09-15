@@ -1,4 +1,5 @@
 import * as http from 'node:http';
+import { app } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -40,7 +41,10 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
 }
 
 function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
-  const server = new McpServer({ name: 'serpent', version: '1.0.3' });
+  // Read the version off the app rather than hardcoding it. The literal here
+  // had drifted to 1.0.3 while the package was on 1.1.0, so every MCP client
+  // was told the wrong version.
+  const server = new McpServer({ name: 'serpent', version: app.getVersion() });
 
   // ── start_crawl ────────────────────────────────────────────────────────────
   server.registerTool(

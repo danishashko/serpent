@@ -3,6 +3,7 @@
 
 export const app = {
   getPath: (_name: string) => '/tmp/serpent-test',
+  getVersion: () => '0.0.0-test',
   on: () => {},
   quit: () => {},
   whenReady: () => Promise.resolve(),
