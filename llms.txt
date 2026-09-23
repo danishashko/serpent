@@ -1,0 +1,29 @@
+# Serpent
+
+> Free, open-source desktop SEO crawler. Electron, React and SQLite, MIT licensed, with a built-in Model Context Protocol server so AI agents can run crawls and read the results directly.
+
+Serpent crawls a website from your own machine and reports technical SEO findings: status codes and redirect chains, titles and meta descriptions, heading structure, canonicals, indexability, the internal link graph, images and alt text, and GEO/AI-readiness checks. Results are stored in an embedded SQLite database and can be exported as CSV or JSON.
+
+Two crawl engines ship with it: a local crawler built on axios and cheerio with optional Electron headless rendering, and an optional bring-your-own-key Bright Data engine for bot-protected or JavaScript-heavy sites.
+
+While the app is open it exposes an MCP server at `http://127.0.0.1:7777/mcp` with eleven tools, bound to localhost and never network-exposed. Only `start_crawl`, `stop_crawl` and `set_settings` change state; the rest are read-only.
+
+Repository: https://github.com/danishashko/serpent — Windows, macOS and Linux.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/danishashko/serpent/main/README.md): features, installation, configuration, MCP setup, and how Serpent compares to other crawlers.
+- [AGENTS.md](https://raw.githubusercontent.com/danishashko/serpent/main/AGENTS.md): build and test commands, the native-module ABI trap, architecture invariants and repo conventions for AI coding agents.
+- [Code signing policy](https://raw.githubusercontent.com/danishashko/serpent/main/CODE_SIGNING.md): how release binaries are signed and how to verify a download.
+- [Privacy policy](https://raw.githubusercontent.com/danishashko/serpent/main/PRIVACY_POLICY.md): what stays on the local machine and what leaves it.
+- [License](https://raw.githubusercontent.com/danishashko/serpent/main/LICENSE): MIT.
+
+## Product
+
+- [Serpent on OrganiKPI](https://organikpi.com/tools/serpent.md): the product page, with what the crawler covers and who it is for.
+- [Serpent SEO crawler guide](https://organikpi.com/blog/technical-seo/serpent-seo-crawler-guide.md): a full walkthrough of a real crawl, from configuration to reading the issue report.
+
+## Optional
+
+- [Releases](https://github.com/danishashko/serpent/releases/latest): installers for Windows, macOS and Linux, with release notes.
+- [Issues](https://github.com/danishashko/serpent/issues): bug reports and feature requests.
