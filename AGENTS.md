@@ -42,7 +42,7 @@ npx prebuild-install -r electron -t 35.7.5 --force    # before running or packag
 
 | Command | What it does |
 |---|---|
-| `npm test` | Vitest unit suites, 27 files under `src/test/*.test.ts`. Needs Node ABI 127. Green baseline: 398 tests. |
+| `npm test` | Vitest unit suites, 27 files under `src/test/*.test.ts`. Needs Node ABI 127. Green baseline: 399 tests. |
 | `npm run typecheck` | `tsc` over both projects (`tsconfig.main.json` + `tsconfig.json`). Both must be clean. |
 | `npm run dev` | Vite + `tsc --watch` + electronmon. Needs Electron ABI 133. |
 | `npm run build` | Renderer then main. |
@@ -66,11 +66,12 @@ Tests run serially on purpose (`pool: 'forks'`, `maxWorkers: 1`, `isolate: false
 - **The `content-type` header carries a charset** (`text/html; charset=UTF-8`). Match with `.includes('text/html')` on a lowercased value, never `===`.
 - **Image extraction that reads `src` alone is blind to most of WordPress.** Lazy-load plugins put an inert `data:image/svg+xml` placeholder in `src` and the real URL in a data attribute. Try `data-lazy-src` / `data-src` / `data-original` / `src` in order and skip any candidate that resolves to a `data:` URI, rather than committing to the first attribute present.
 - **Redirects have no body.** `crawler-local.ts` nulls `html` and `contentType` when a redirect chain exists and queues the destination for its own crawl. Content checks on a 3xx are always false positives.
+- **`getCategories()` is the allow-list for the whole Issues tab, not just its ordering.** `IssuesTab.tsx` seeds its map from `getCategories()` and then pushes only into buckets that already exist, so an issue whose category is missing from that list is discarded with no error and no empty section. That is exactly how every accessibility finding stayed invisible for three real detectors while `'accessibility'` was a valid `IssueCategory` with a `categoryLabel()` case. **A new `IssueCategory` is not wired up until it is in `getCategories()`.**
 - **A too-aggressive gate fails silently and a too-loose one fails loudly, so review a tightening harder than a loosening.** Gating the `links` category as HTML-only once silenced `low_link_score` for every non-HTML asset, and a real finding — an under-linked PDF — disappeared with no signal. `linkScore` comes from the internal link graph (`calculateLinkScores()` in `database.ts`), not from the page body.
 
 ## Known gaps — don't spend time rediscovering these
 
-- **Accessibility issues are computed but never shown.** `getCategories()` in `issues-detector.ts` returns 13 categories and omits `'accessibility'`, even though `a11y_critical`, `a11y_serious` and `a11y_low_score` are real detectors, `'accessibility'` is a valid `IssueCategory`, and `categoryLabel()` has a case for it. `IssuesTab.tsx` seeds its map from `getCategories()` and drops any issue whose category is not in that map, so every accessibility finding is discarded before it reaches the UI. Adding `'accessibility'` to `getCategories()` is the fix; it has not been made yet.
+- **The MCP `get_issues` tool has no accessibility checks.** It buckets by severity only, has no category concept, and never reads `a11yCritical` / `a11ySerious` / `a11yScore`, so an agent sees a different issue set from the Issues tab. Adding them changes a published tool's output and belongs in its own task.
 - **`isLazy` only checks `loading="lazy"`.** An image lazy-loaded by JS (WP Rocket and friends) carries no `loading` attribute and still reports `isLazy: false`. Known, not fixed, and not the same bug as the `src` placeholder one above.
 
 ## Conventions

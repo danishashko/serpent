@@ -173,6 +173,17 @@ describe('issues-detector', () => {
     expect(findIssue(issues, 'high_image_count')?.affectedUrls).toContain('https://example.com/imgs');
   });
 
+  it('surfaces accessibility issues — getCategories() is the Issues tab allow-list', () => {
+    const issues = computeIssues([
+      page({ url: 'https://example.com/a11y', a11yCritical: 2, a11ySerious: 1, a11yScore: 40 }),
+    ]);
+    const found = issues.filter((i) => i.category === 'accessibility').map((i) => i.id);
+    expect(found).toEqual(expect.arrayContaining(['a11y_critical', 'a11y_serious', 'a11y_low_score']));
+    // IssuesTab seeds its bucket map from getCategories() and silently drops any
+    // issue whose category is missing, so a detector is not wired up without this.
+    expect(getCategories()).toContain('accessibility');
+  });
+
   it('getCategories + categoryLabel cover every category', () => {
     for (const c of getCategories()) {
       expect(typeof categoryLabel(c)).toBe('string');

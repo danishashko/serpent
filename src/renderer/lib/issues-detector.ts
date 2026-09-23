@@ -304,6 +304,7 @@ export function getCategories(): IssueCategory[] {
     'structured_data',
     'links',
     'images',
+    'accessibility',
   ];
 }
 
