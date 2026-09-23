@@ -50,6 +50,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'start_crawl',
     {
+      title: 'Start a crawl',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description: 'Start a new website crawl. Returns the crawl ID. Use engine "local" for normal crawls or "brightdata" when JS rendering is needed.',
       inputSchema: z.object({
         url: z.string().describe('The starting URL to crawl (e.g. https://example.com)'),
@@ -141,6 +143,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'stop_crawl',
     {
+      title: 'Stop the running crawl',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description: 'Stop the currently running crawl.',
       inputSchema: z.object({}),
     },
@@ -158,6 +162,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'get_crawl_status',
     {
+      title: 'Crawl status',
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: 'Get the current status of the active crawl.',
       inputSchema: z.object({}),
     },
@@ -178,6 +184,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'list_crawls',
     {
+      title: 'List crawls',
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: 'List all past crawls stored in the database.',
       inputSchema: z.object({}),
     },
@@ -203,6 +211,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'get_results',
     {
+      title: 'Page results',
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: 'Get crawled page data for a specific crawl. Returns SEO data for each page.',
       inputSchema: z.object({
         crawl_id: z.string().describe('Crawl ID from list_crawls or start_crawl'),
@@ -262,6 +272,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'get_issues',
     {
+      title: 'SEO issues',
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: 'Get SEO issues found during a crawl, grouped by severity.',
       inputSchema: z.object({
         crawl_id: z.string().describe('Crawl ID to analyze'),
@@ -390,6 +402,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'export_csv',
     {
+      title: 'Export results as CSV',
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: 'Export crawl results as CSV text.',
       inputSchema: z.object({
         crawl_id: z.string().describe('Crawl ID to export'),
@@ -428,6 +442,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'get_links',
     {
+      title: 'Internal link graph',
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: 'Get the internal link graph for a crawl. Returns source→target pairs with anchor text. Use this to find orphaned pages (no inbound links), link equity distribution, and navigation structure.',
       inputSchema: z.object({
         crawl_id: z.string().describe('Crawl ID from list_crawls or start_crawl'),
@@ -495,6 +511,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'get_images',
     {
+      title: 'Image audit',
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: 'Audit images found during a crawl. Returns images with missing alt text, format info, and lazy-loading status. Useful for accessibility and performance analysis.',
       inputSchema: z.object({
         crawl_id: z.string().describe('Crawl ID from list_crawls or start_crawl'),
@@ -539,6 +557,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'set_settings',
     {
+      title: 'Save Bright Data credentials',
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description: 'Save Bright Data credentials to Serpent so the brightdata crawl engine becomes available. Call get_settings afterwards to confirm.',
       inputSchema: z.object({
         bd_api_key: z.string().min(1).describe('Bright Data API key (bearer token)'),
@@ -565,6 +585,8 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
   server.registerTool(
     'get_settings',
     {
+      title: 'Read Serpent settings',
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: 'Check which crawl engines and features are configured in Serpent. Call this before starting a crawl to know if Bright Data proxy is available. Returns available engines and configuration status.',
       inputSchema: z.object({}),
     },
