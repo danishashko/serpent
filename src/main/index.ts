@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, protocol } from 'electron';
 import path from 'path';
 import keytar from 'keytar';
 import { initDatabase, markRunningCrawlsAsInterrupted, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks, recomputeLinkHealth } from './database';
@@ -15,6 +15,8 @@ import { querySerpBatch, storeSerpResults, getSerpResults } from './serp-client'
 import { discoverCompetitors, discoverContentGaps, getDiscoverResults, getContentGaps } from './discover-client';
 import { connectGSC, clearGSCTokens, getGSCSites, fetchGSCData, isGSCConnected, setGSCCredentials } from './gsc-client';
 import { generateSitemap as buildSitemap } from './sitemap-generator';
+import { buildXlsx } from './xlsx-writer';
+import { PLUGIN_SCHEME, PLUGIN_CSP, listPlugins, pluginResponse, installExamplePlugins } from './plugins';
 import { analyzeSitemap as runSitemapAnalyze } from './sitemap-analyzer';
 import { testRobots as runRobotsTest } from './robots-tester';
 import { IPC, CrawlConfig, AppSettings, AIProvider, IssueRecommendation, ReportConfig, BulkExportRequest, BulkExportCategory, PerUrlExportRequest, ExportFormat, PageData, LinkData, ImageData, GEOScore, PerformanceScore, RobotsTestRequest, SitemapGenerateOptions, CrawlSchedule, CrawlProgress, PsiStrategy, ScheduleDiffSummary, EmbeddingProvider, EmbeddingTarget, EmbeddingRunConfig, EmbeddingStatus, SemanticAnalysis } from '../types/index';
@@ -136,6 +138,13 @@ function createWindow(): void {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
+  // The only sub-frames are plugin tabs. A plugin must not be able to send the
+  // crawl somewhere by navigating its own frame; the window's CSP (frame-src)
+  // already refuses that, and this stops the request before it is made.
+  mainWindow.webContents.on('will-frame-navigate', event => {
+    if (!event.isMainFrame && !event.url.startsWith(`${PLUGIN_SCHEME}://`)) event.preventDefault();
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     // Only open http/https external links — prevents arbitrary-protocol RCE.
     try {
@@ -151,6 +160,50 @@ function createWindow(): void {
     mainWindow = null;
   });
 }
+
+// ─── Plugin tabs ───────────────────────────────────────────────────────────────
+
+// Must run before the app is ready. "standard" gives plugin pages normal URL
+// parsing; "secure" lets the app window embed them from file:// or localhost.
+protocol.registerSchemesAsPrivileged([{ scheme: PLUGIN_SCHEME, privileges: { standard: true, secure: true } }]);
+
+function pluginsDir(): string {
+  return path.join(app.getPath('userData'), 'plugins');
+}
+
+/** Serve plugin pages. Every response carries the no-network CSP; see plugins.ts for the trust model. */
+function registerPluginProtocol(): void {
+  protocol.handle(PLUGIN_SCHEME, request => {
+    const r = pluginResponse(pluginsDir(), request.url);
+    return new Response(r.body, {
+      status: r.status,
+      headers: {
+        'content-type': r.contentType,
+        'content-security-policy': PLUGIN_CSP,
+        'x-content-type-options': 'nosniff',
+        'cache-control': 'no-store',
+      },
+    });
+  });
+}
+
+ipcMain.handle(IPC.PLUGINS_LIST, () => listPlugins(pluginsDir()));
+
+ipcMain.handle(IPC.PLUGINS_OPEN_FOLDER, async () => {
+  const dir = pluginsDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const error = await shell.openPath(dir);
+  return { success: !error, path: dir, error: error || undefined };
+});
+
+ipcMain.handle(IPC.PLUGINS_INSTALL_EXAMPLES, () => {
+  try {
+    const copied = installExamplePlugins(path.join(__dirname, '../../resources/plugins'), pluginsDir());
+    return { success: true, copied };
+  } catch (err) {
+    return { success: false, copied: [], error: String(err) };
+  }
+});
 
 // ─── App Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -202,6 +255,7 @@ app.whenReady().then(() => {
   }
 
   console.log('[MAIN] DB initialized — creating window');
+  registerPluginProtocol();
   createWindow();
   console.log('[MAIN] window created');
   mcpHttpServer = startMcpServer(orchestrator);
@@ -392,8 +446,16 @@ async function runHeadlessCrawl(url: string): Promise<void> {
       await postCrawlRuns.get(crawlId);
     }
     const pages = getPagesByCrawl(crawlId);
-    const csv = buildCsvString(pages.map(pageToFullRow));
-    fs.writeFileSync(output, csv, 'utf8');
+    if (output.toLowerCase().endsWith('.xlsx')) {
+      // A workbook can carry what a CSV cannot: the links and images next to the pages.
+      fs.writeFileSync(output, buildXlsx([
+        { name: 'Pages', rows: pages.map(pageToFullRow) },
+        { name: 'Links', rows: getLinksByCrawl(crawlId).map(linkToRow) },
+        { name: 'Images', rows: getImagesByCrawl(crawlId).map(imageToRow) },
+      ]));
+    } else {
+      fs.writeFileSync(output, buildCsvString(pages.map(pageToFullRow)), 'utf8');
+    }
     console.log(`[SERPENT] done — ${pages.length} pages exported to ${output} (crawl ${crawlId})`);
     setTimeout(() => app.exit(0), 100);
   });
@@ -800,6 +862,21 @@ ipcMain.handle(IPC.DATA_EXPORT_JSON, async (_event, data: { rows: Record<string,
     if (!filePath) return { success: false, cancelled: true };
 
     fs.writeFileSync(filePath, JSON.stringify(data.rows, null, 2), 'utf8');
+    return { success: true, filePath };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle(IPC.DATA_EXPORT_XLSX, async (_event, data: { rows: Record<string, unknown>[]; filename: string; sheetName?: string }) => {
+  try {
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: data.filename,
+      filters: [{ name: 'Excel workbook', extensions: ['xlsx'] }],
+    });
+    if (!filePath) return { success: false, cancelled: true };
+
+    fs.writeFileSync(filePath, buildXlsx([{ name: data.sheetName || 'Serpent', rows: data.rows }]));
     return { success: true, filePath };
   } catch (err) {
     return { success: false, error: String(err) };
@@ -1486,9 +1563,13 @@ function getCategoryData(crawlId: string, category: BulkExportCategory): { rows:
   }
 }
 
-function writeExportFile(filePath: string, rows: Record<string, unknown>[], format: ExportFormat): void {
+const EXPORT_FILTER_NAMES: Record<ExportFormat, string> = { csv: 'CSV', json: 'JSON', xlsx: 'Excel workbook' };
+
+function writeExportFile(filePath: string, rows: Record<string, unknown>[], format: ExportFormat, sheetName = 'Serpent'): void {
   if (format === 'csv') {
     fs.writeFileSync(filePath, buildCsvString(rows), 'utf8');
+  } else if (format === 'xlsx') {
+    fs.writeFileSync(filePath, buildXlsx([{ name: sheetName, rows }]));
   } else {
     fs.writeFileSync(filePath, JSON.stringify(rows, null, 2), 'utf8');
   }
@@ -1497,7 +1578,7 @@ function writeExportFile(filePath: string, rows: Record<string, unknown>[], form
 ipcMain.handle(IPC.EXPORT_BULK, async (_event, req: BulkExportRequest) => {
   try {
     const { crawlId, categories, format } = req;
-    const ext = format === 'csv' ? 'csv' : 'json';
+    const ext: ExportFormat = format === 'csv' || format === 'xlsx' ? format : 'json';
 
     if (categories.length === 1) {
       // Single category: save as single file
@@ -1505,11 +1586,27 @@ ipcMain.handle(IPC.EXPORT_BULK, async (_event, req: BulkExportRequest) => {
       if (rows.length === 0) return { success: false, error: 'No data for this export' };
       const { filePath } = await dialog.showSaveDialog({
         defaultPath: `serpent-${label}.${ext}`,
-        filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+        filters: [{ name: EXPORT_FILTER_NAMES[ext], extensions: [ext] }],
       });
       if (!filePath) return { success: false, cancelled: true };
-      writeExportFile(filePath, rows, format);
+      writeExportFile(filePath, rows, format, label);
       return { success: true, filePath, totalRows: rows.length };
+    }
+
+    if (format === 'xlsx') {
+      // Multiple categories in XLSX: one workbook, one sheet per category.
+      const sheets = categories
+        .map(cat => getCategoryData(crawlId, cat))
+        .filter(d => d.rows.length > 0)
+        .map(d => ({ name: d.label, rows: d.rows }));
+      if (sheets.length === 0) return { success: false, error: 'No data for this export' };
+      const { filePath } = await dialog.showSaveDialog({
+        defaultPath: 'serpent-export.xlsx',
+        filters: [{ name: EXPORT_FILTER_NAMES.xlsx, extensions: ['xlsx'] }],
+      });
+      if (!filePath) return { success: false, cancelled: true };
+      fs.writeFileSync(filePath, buildXlsx(sheets));
+      return { success: true, filePath, totalRows: sheets.reduce((n, s) => n + s.rows.length, 0) };
     }
 
     // Multiple categories: pick a folder, save as separate files
@@ -1539,7 +1636,7 @@ ipcMain.handle(IPC.EXPORT_BULK, async (_event, req: BulkExportRequest) => {
 ipcMain.handle(IPC.EXPORT_PER_URL, async (_event, req: PerUrlExportRequest) => {
   try {
     const { crawlId, urls, type, format } = req;
-    const ext = format === 'csv' ? 'csv' : 'json';
+    const ext: ExportFormat = format === 'csv' || format === 'xlsx' ? format : 'json';
 
     let rows: Record<string, unknown>[] = [];
     let label = '';
@@ -1561,10 +1658,10 @@ ipcMain.handle(IPC.EXPORT_PER_URL, async (_event, req: PerUrlExportRequest) => {
 
     const { filePath } = await dialog.showSaveDialog({
       defaultPath: `serpent-${label}-${urls.length}-pages.${ext}`,
-      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+      filters: [{ name: EXPORT_FILTER_NAMES[ext], extensions: [ext] }],
     });
     if (!filePath) return { success: false, cancelled: true };
-    writeExportFile(filePath, rows, format);
+    writeExportFile(filePath, rows, format, label);
     return { success: true, filePath, totalRows: rows.length };
   } catch (err) {
     return { success: false, error: String(err) };

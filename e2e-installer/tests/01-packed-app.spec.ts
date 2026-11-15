@@ -76,6 +76,30 @@ test('packed app launches and renders the Serpent shell', async () => {
     });
     expect(settings).toHaveProperty('brightDataZone');
 
+    // Example plugins are read out of the asar bundle (resources/plugins), and
+    // plugin pages come from the serpent-plugin:// protocol handler. Neither is
+    // exercised by anything above, and both break silently if the build.files
+    // glob or the scheme registration changes.
+    const installed = await win.evaluate(async () => {
+      // @ts-expect-error: api is injected by preload
+      const r = await window.api.installExamplePlugins();
+      // @ts-expect-error: api is injected by preload
+      const list = await window.api.listPlugins();
+      return { copied: r.copied.length, ids: list.map((p: { id: string }) => p.id) };
+    });
+    expect(installed.copied).toBeGreaterThanOrEqual(2);
+    expect(installed.ids).toContain('directory-breakdown');
+
+    await win.evaluate(() => {
+      const f = document.createElement('iframe');
+      f.setAttribute('sandbox', 'allow-scripts');
+      f.src = 'serpent-plugin://plugin/directory-breakdown/index.html';
+      document.body.appendChild(f);
+    });
+    await expect.poll(() => win!.frames().some(f => f.url().startsWith('serpent-plugin://')), { timeout: 15_000 }).toBe(true);
+    const pluginFrame = win.frames().find(f => f.url().startsWith('serpent-plugin://'))!;
+    await expect.poll(() => pluginFrame.evaluate(() => typeof (window as unknown as { serpent?: object }).serpent), { timeout: 15_000 }).toBe('object');
+
     // Quick UI sanity — main toolbar buttons are present.
     await expect(win.getByRole('button', { name: /Crawl/ }).first()).toBeVisible();
     await expect(win.getByRole('button', { name: /Settings/ }).first()).toBeVisible();

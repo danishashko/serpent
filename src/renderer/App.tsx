@@ -5,7 +5,7 @@ import CostMonitor from './components/CostMonitor';
 import Settings from './components/Settings';
 import AIInsights from './components/AIInsights';
 import { applyTheme, getThemePref, watchSystemTheme, type ThemePref } from './lib/theme';
-import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore, EmbeddingStatus, EmbeddingRunConfig, SemanticAnalysis, SemanticNeighbourRow, ScheduleDiffSummary, LlmsTxtResult } from '../types/index';
+import { CrawlProgress, PageData, LinkData, ImageData, CrawlRecord, SerpResultRow, UsageStats, RedirectData, HreflangData, CustomExtractionResult, IssueRecommendation, CrawlDiff, GSCData, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, RobotsTestRequest, RobotsTestResult, SitemapAnalysisResult, SitemapGenerateOptions, CrawlSchedule, PsiScore, EmbeddingStatus, EmbeddingRunConfig, SemanticAnalysis, SemanticNeighbourRow, ScheduleDiffSummary, LlmsTxtResult, PluginInfo } from '../types/index';
 
 // Allow Electron drag region CSS property
 declare module 'react' {
@@ -55,6 +55,7 @@ declare global {
       getCustomExtracts: (crawlId: string) => Promise<CustomExtractionResult[]>;
       exportCsv: (data: { rows: Record<string, unknown>[]; filename: string }) => Promise<{ success: boolean }>;
       exportJson: (data: { rows: Record<string, unknown>[]; filename: string }) => Promise<{ success: boolean }>;
+      exportXlsx: (data: { rows: Record<string, unknown>[]; filename: string; sheetName?: string }) => Promise<{ success: boolean }>;
       getSettings: () => Promise<unknown>;
       saveSettings: (settings: unknown) => Promise<{ success: boolean; error?: string }>;
       testBrightData: (apiKey: string, zone: string) => Promise<{ success: boolean }>;
@@ -100,6 +101,9 @@ declare global {
       generateSitemap: (opts: SitemapGenerateOptions) => Promise<{ ok: boolean; canceled?: boolean; totalUrls?: number; files?: { filename: string; urlCount: number }[]; written?: string[]; error?: string }>;
       analyzeSitemap: (payload: { crawlId: string; sitemapUrl: string }) => Promise<SitemapAnalysisResult>;
       sitemapFetchUrls: (sitemapUrl: string) => Promise<{ urls: string[]; error?: string }>;
+      listPlugins: () => Promise<PluginInfo[]>;
+      openPluginsFolder: () => Promise<{ success: boolean; path: string; error?: string }>;
+      installExamplePlugins: () => Promise<{ success: boolean; copied: string[]; error?: string }>;
       onUpdateAvailable: (cb: (info: { version: string }) => void) => void;
       onUpdateDownloaded: (cb: (info: { version: string }) => void) => void;
       installUpdate?: () => Promise<void>;

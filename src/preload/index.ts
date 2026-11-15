@@ -62,6 +62,8 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke(IPC.DATA_EXPORT_CSV, data),
   exportJson: (data: { rows: Record<string, unknown>[]; filename: string }) =>
     ipcRenderer.invoke(IPC.DATA_EXPORT_JSON, data),
+  exportXlsx: (data: { rows: Record<string, unknown>[]; filename: string; sheetName?: string }) =>
+    ipcRenderer.invoke(IPC.DATA_EXPORT_XLSX, data),
 
   // Settings
   getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
@@ -160,6 +162,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke(IPC.SITEMAP_ANALYZE, payload),
   sitemapFetchUrls: (sitemapUrl: string) =>
     ipcRenderer.invoke(IPC.SITEMAP_FETCH_URLS, sitemapUrl),
+
+  // Plugin tabs
+  listPlugins: () => ipcRenderer.invoke(IPC.PLUGINS_LIST),
+  openPluginsFolder: () => ipcRenderer.invoke(IPC.PLUGINS_OPEN_FOLDER),
+  installExamplePlugins: () => ipcRenderer.invoke(IPC.PLUGINS_INSTALL_EXAMPLES),
 
   // Auto-updater events
   onUpdateAvailable: (cb: (info: { version: string }) => void) => {

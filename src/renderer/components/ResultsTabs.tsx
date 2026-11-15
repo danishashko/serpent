@@ -1,11 +1,13 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore, UncrawlableReason, UNCRAWLABLE_REASON_LABELS, LlmsTxtResult, isMissingAlt } from '../../types/index';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore, UncrawlableReason, UNCRAWLABLE_REASON_LABELS, LlmsTxtResult, PluginInfo, isMissingAlt } from '../../types/index';
 import CrawlComparison from './CrawlComparison';
 import SiteMap from './SiteMap';
 import ExportModal from './ExportModal';
 import IssuesTab from './IssuesTab';
 import SitemapPanel from './SitemapPanel';
 import SemanticPanel from './SemanticPanel';
+import PhrasesPanel from './PhrasesPanel';
+import PluginsPanel from './PluginsPanel';
 
 interface Props {
   pages: PageData[];
@@ -30,7 +32,7 @@ interface Props {
   onContentGapsUpdate?: (gaps: ContentGap[]) => void;
 }
 
-type Tab = 'pages' | 'links' | 'images' | 'issues_v2' | 'issues' | 'sitemap' | 'semantic' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map' | 'geo' | 'perf' | 'competitors' | 'content_gaps';
+type Tab = 'pages' | 'links' | 'images' | 'issues_v2' | 'issues' | 'sitemap' | 'semantic' | 'phrases' | 'redirects' | 'hreflang' | 'duplicates' | 'extractions' | 'serp' | 'map' | 'geo' | 'perf' | 'competitors' | 'content_gaps' | 'plugins';
 type IssueFilter =
   | 'all'
   | 'missing_title'
@@ -177,6 +179,16 @@ const MAX_RENDER_ROWS = 1000;
 
 export default function ResultsTabs({ pages, links, images, serpResults, redirects, hreflang, duplicates, customExtracts, geoScores, perfScores, crawlId, showToast, onSerpQuery, serpLoading, onGeoScoresUpdate, onPerfScoresUpdate, discoverResults, contentGaps, onDiscoverResultsUpdate, onContentGapsUpdate }: Props): React.ReactElement {
   const [tab, setTab] = useState<Tab>('pages');
+  // Plugin tabs: one per .js file in the plugins folder. activePluginId picks
+  // which one the 'plugins' tab shows; null is the list of installed plugins.
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [activePluginId, setActivePluginId] = useState<string | null>(null);
+  const reloadPlugins = useCallback(async (): Promise<PluginInfo[]> => {
+    const list = await window.api.listPlugins().catch(() => [] as PluginInfo[]);
+    setPlugins(list);
+    return list;
+  }, []);
+  useEffect(() => { void reloadPlugins(); }, [reloadPlugins]);
   const stripRef = useRef<HTMLDivElement>(null);
   const [tabFade, setTabFade] = useState({ l: false, r: false });
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
@@ -481,6 +493,15 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     else showToast('JSON export cancelled', 'info');
   };
 
+  const exportXlsx = async () => {
+    if (!crawlId) return;
+    const { rows, filename } = getExportData('xlsx');
+    if (rows.length === 0) { showToast('No data to export', 'warning'); return; }
+    const result = await window.api.exportXlsx({ rows, filename, sheetName: tab });
+    if (result.success) showToast('XLSX exported!', 'success');
+    else showToast('XLSX export cancelled', 'info');
+  };
+
   const getExportData = (ext: string): { rows: Record<string, unknown>[]; filename: string } => {
     const prefix = `serpent-${crawlId}`;
     if (tab === 'pages' || tab === 'issues') {
@@ -605,7 +626,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     return { rows: [], filename: '' };
   };
 
-  const handlePerUrlExport = async (url: string, type: 'inlinks' | 'outlinks' | 'images', format: 'csv' | 'json') => {
+  const handlePerUrlExport = async (url: string, type: 'inlinks' | 'outlinks' | 'images', format: 'csv' | 'json' | 'xlsx') => {
     if (!crawlId) return;
     try {
       const result = await (window as any).api.exportPerUrl({ crawlId, urls: [url], type, format });
@@ -660,7 +681,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     </th>
   );
 
-  const tabs: Tab[] = ['pages', 'links', 'images', 'issues_v2', 'issues', 'sitemap', 'semantic', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf', 'competitors', 'content_gaps'];
+  const tabs: Tab[] = ['pages', 'links', 'images', 'issues_v2', 'issues', 'sitemap', 'semantic', 'phrases', 'redirects', 'hreflang', 'duplicates', 'extractions', 'serp', 'map', 'geo', 'perf', 'competitors', 'content_gaps', 'plugins'];
 
   // Label and count are separate so the count can be de-emphasised and the
   // label can stay on one line — the old single string wrapped to 3 rows.
@@ -672,6 +693,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     issues: { label: 'Issue list', count: totalIssueCount },
     sitemap: { label: 'Sitemap' },
     semantic: { label: 'Semantic' },
+    phrases: { label: 'Phrases' },
     redirects: { label: 'Redirects', count: redirects.length },
     hreflang: { label: 'Hreflang', count: hreflang.length },
     duplicates: { label: 'Duplicates', count: duplicates.length },
@@ -682,6 +704,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
     perf: { label: 'Perf', count: perfScores.length },
     competitors: { label: 'Competitors', count: discoverResults.length },
     content_gaps: { label: 'Gaps', count: contentGaps.length },
+    plugins: { label: 'Plugins', count: plugins.length },
   };
 
   return (
@@ -697,20 +720,41 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         flexShrink: 0,
       }}>
         <div ref={stripRef} className={`tab-strip${tabFade.l ? ' fade-l' : ''}${tabFade.r ? ' fade-r' : ''}`} role="tablist">
-          {tabs.map(t => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              className={`tab${tab === t ? ' active' : ''}`}
-              onClick={() => setTab(t)}
-            >
-              {TAB_META[t].label}
-              {TAB_META[t].count !== undefined && (
-                <span className="tab-count">{TAB_META[t].count}</span>
-              )}
-            </button>
-          ))}
+          {tabs.map(t => {
+            const active = t === 'plugins' ? tab === t && activePluginId === null : tab === t;
+            return (
+              <React.Fragment key={t}>
+                {/* Installed plugins sit just before the Plugins tab that manages them. */}
+                {t === 'plugins' && plugins.filter(p => !p.error).map(p => {
+                  const on = tab === 'plugins' && activePluginId === p.id;
+                  return (
+                    <button
+                      key={`plugin:${p.id}`}
+                      role="tab"
+                      aria-selected={on}
+                      data-testid="plugin-tab"
+                      title={p.description || p.name}
+                      className={`tab${on ? ' active' : ''}`}
+                      onClick={() => { setActivePluginId(p.id); setTab('plugins'); }}
+                    >
+                      {p.name}
+                    </button>
+                  );
+                })}
+                <button
+                  role="tab"
+                  aria-selected={active}
+                  className={`tab${active ? ' active' : ''}`}
+                  onClick={() => { if (t === 'plugins') setActivePluginId(null); setTab(t); }}
+                >
+                  {TAB_META[t].label}
+                  {TAB_META[t].count !== undefined && (
+                    <span className="tab-count">{TAB_META[t].count}</span>
+                  )}
+                </button>
+              </React.Fragment>
+            );
+          })}
         </div>
       </div>
 
@@ -723,7 +767,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         borderBottom: '1px solid var(--border)',
         flexShrink: 0,
       }}>
-        {!(['map', 'issues_v2', 'sitemap', 'semantic'] as Tab[]).includes(tab) && (
+        {!(['map', 'issues_v2', 'sitemap', 'semantic', 'phrases', 'plugins'] as Tab[]).includes(tab) && (
           <input
             className="input"
             style={{ width: 220, padding: '3px 8px', fontSize: 12, flexShrink: 0 }}
@@ -761,6 +805,9 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
             </button>
             <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} onClick={exportJson}>
               ↓ JSON
+            </button>
+            <button className="btn-ghost" data-testid="export-xlsx" style={{ fontSize: 12, padding: '3px 10px' }} onClick={exportXlsx}>
+              ↓ XLSX
             </button>
             <button className="btn-ghost" style={{ fontSize: 12, padding: '3px 10px' }} disabled={!crawlId} onClick={() => setShowExportModal(true)}>
               ⤓ Bulk Export
@@ -1089,6 +1136,24 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
 
         {tab === 'semantic' && (
           <SemanticPanel crawlId={crawlId} showToast={showToast} />
+        )}
+
+        {tab === 'phrases' && (
+          <PhrasesPanel crawlId={crawlId} pages={pages} links={links} showToast={showToast} />
+        )}
+
+        {tab === 'plugins' && (
+          <PluginsPanel
+            crawlId={crawlId}
+            pages={pages}
+            links={links}
+            images={images}
+            plugins={plugins}
+            activeId={activePluginId}
+            onSelect={setActivePluginId}
+            onReload={reloadPlugins}
+            showToast={showToast}
+          />
         )}
 
         {tab === 'links' && (
@@ -2142,6 +2207,13 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 onClick={() => handlePerUrlExport(contextMenu.url, type, 'json')}
               >
                 JSON
+              </button>
+              <button
+                className="btn-ghost"
+                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 0, color: 'var(--text-muted)' }}
+                onClick={() => handlePerUrlExport(contextMenu.url, type, 'xlsx')}
+              >
+                XLSX
               </button>
             </div>
           ))}

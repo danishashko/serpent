@@ -145,6 +145,9 @@ export default function ExportModal({ crawlId, onClose, showToast }: Props) {
           <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
             <input type="radio" name="fmt" checked={format === 'json'} onChange={() => setFormat('json')} /> JSON
           </label>
+          <label title="One workbook, one sheet per selected export" style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer' }}>
+            <input type="radio" name="fmt" checked={format === 'xlsx'} onChange={() => setFormat('xlsx')} /> XLSX
+          </label>
           <div style={{ flex: 1 }} />
           <button className="btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }} onClick={selectAll}>
             {GROUPS.flatMap(g => g.items.map(i => i.key)).every(k => selected.has(k)) ? 'Deselect All' : 'Select All'}

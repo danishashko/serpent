@@ -2,7 +2,7 @@
 
 > Free, open-source desktop SEO crawler. Electron, React and SQLite, MIT licensed, with a built-in Model Context Protocol server so AI agents can run crawls and read the results directly.
 
-Serpent crawls a website from your own machine and reports technical SEO findings: status codes and redirect chains, titles and meta descriptions, heading structure, canonicals, indexability, the internal link graph, images and alt text, and GEO/AI-readiness checks. Results are stored in an embedded SQLite database and can be exported as CSV or JSON.
+Serpent crawls a website from your own machine and reports technical SEO findings: status codes and redirect chains, titles and meta descriptions, heading structure, canonicals, indexability, the internal link graph, images and alt text, and GEO/AI-readiness checks. Results are stored in an embedded SQLite database and can be exported as CSV, JSON or XLSX. Single-file JavaScript plugins add custom tabs and run in a sandbox with no network access (docs/PLUGINS.md).
 
 Two crawl engines ship with it: a local crawler built on axios and cheerio with optional Electron headless rendering, and an optional bring-your-own-key Bright Data engine for bot-protected or JavaScript-heavy sites.
 

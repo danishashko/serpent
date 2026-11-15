@@ -619,7 +619,7 @@ export type ReportSection =
 
 // ── Bulk / Flexible Export ──
 
-export type ExportFormat = 'csv' | 'json';
+export type ExportFormat = 'csv' | 'json' | 'xlsx';
 
 export type BulkExportCategory =
   // Links
@@ -878,6 +878,7 @@ export const IPC = {
   DATA_GET_CRAWLS: 'data:get-crawls',
   DATA_EXPORT_CSV: 'data:export-csv',
   DATA_EXPORT_JSON: 'data:export-json',
+  DATA_EXPORT_XLSX: 'data:export-xlsx',
 
   // Settings
   SETTINGS_GET: 'settings:get',
@@ -968,4 +969,33 @@ export const IPC = {
   SCHEDULE_ADD: 'schedule:add',
   SCHEDULE_DELETE: 'schedule:delete',
   SCHEDULE_TOGGLE: 'schedule:toggle',
+
+  // Plugin tabs
+  PLUGINS_LIST: 'plugins:list',
+  PLUGINS_OPEN_FOLDER: 'plugins:open-folder',
+  PLUGINS_INSTALL_EXAMPLES: 'plugins:install-examples',
 } as const;
+
+// ─── Plugin tabs ───────────────────────────────────────────────────────────────
+
+/** A .js file in the plugins folder. See src/main/plugins.ts for the trust model. */
+export interface PluginInfo {
+  /** URL-safe id derived from the file name. */
+  id: string;
+  file: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  mtimeMs: number;
+  /** Set when the file is listed but cannot be run. */
+  error?: string;
+}
+
+/** Theme variables the app forwards to a plugin frame, so a plugin tab follows the light or dark theme. */
+export const PLUGIN_THEME_VARS = [
+  '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-hover', '--border',
+  '--text-primary', '--text-secondary', '--text-muted',
+  '--accent-blue', '--accent-green', '--accent-red', '--accent-orange', '--accent-purple', '--accent-teal',
+  '--tint-blue', '--tint-green', '--tint-red', '--tint-orange',
+] as const;

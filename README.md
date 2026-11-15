@@ -36,6 +36,7 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 | 🌐 **Built for AI search** | GEO/AEO readiness scoring per page, plus `llms.txt` validation — audit how answer engines read your site, not just how Google crawls it. |
 | ♿ **Accessibility included** | Every crawl runs a static WCAG pass. No second tool, no extra request. |
 | 🤖 **Agent-ready** | A built-in MCP server lets Claude Desktop (or any MCP client) drive crawls and query results directly. |
+| 🧩 **Extensible** | Drop a `.js` file into the plugins folder and it becomes a tab. Plugins run in a sandbox with no network and no access to your keys. |
 
 ---
 
@@ -69,7 +70,7 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - **Configurable User-Agent** (Googlebot, Bingbot, Chrome presets or custom), **custom HTTP headers**, **HTTP Basic auth** (scoped to the host you entered it for — never forwarded across an off-host redirect), and **session cookies** for authenticated crawls
 - **Scheduled crawls** — recurring local crawls that run while the app is open, with optional **auto-compare** that diffs each run against the previous one
 - **Crawl retention** — optionally auto-delete crawls after 30/60/90 days, with a per-crawl lock to keep the ones that matter
-- **Headless CLI mode** — `serpent --headless-crawl=<url> --output=pages.csv` crawls and exports without opening a window (`--no-link-checks` skips the external link, image and sitemap pass)
+- **Headless CLI mode** — `serpent --headless-crawl=<url> --output=pages.csv` crawls and exports without opening a window (`--no-link-checks` skips the external link, image and sitemap pass). Name the output `.xlsx` to get one workbook with Pages, Links and Images sheets
 - **Pause / Resume / Stop** with persistent crawl state and cost continuity
 - **Crawl comparison** — diff any two crawls to see new, removed, and changed pages
 </details>
@@ -86,6 +87,7 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - **Broken link detection**: every page that links to a dead internal URL, a dead external URL (404, 410 or a host that no longer resolves) or a redirecting internal URL, with the offending link named. Sites that only block bots (403, 429) are not reported as broken
 - **Broken image detection**: image files that return 404 or 410
 - **XML sitemap audit**: finds the sitemap from `robots.txt`, then flags non-indexable URLs listed in it and indexable pages missing from it
+- **Phrase analysis (n-grams)**: the most used 1 to 4 word phrases across page titles, H1s, H2s, meta descriptions, internal anchor text and body text, with how many pages use each one
 - **Duplicate content detection** — exact (SHA-256) and **near-duplicate** (64-bit simhash, ~90%+ similarity)
 - **Uncrawlable link detection** — `<div href>`, `javascript:` hrefs, and onclick-only anchors that search engines can't reliably follow
 - **HTML over 2MB** — Googlebot only reads the first 2MB of a document
@@ -204,7 +206,17 @@ Generate a client-ready PDF from any crawl, with selectable sections: executive 
 - **Crawl comparison** — side-by-side diff of new / removed / changed pages
 - **Cost monitor** — real-time Bright Data spend, daily history chart, and hard-stop limits
 - **SQLite** local storage (zero cloud dependency)
-- **CSV & JSON export** with sortable, filterable tables across every results tab
+- **CSV, JSON & XLSX export** with sortable, filterable tables across every results tab. A bulk XLSX export is one workbook with a sheet per report
+</details>
+
+<details>
+<summary><b>🧩 Plugin tabs</b></summary>
+
+- **One `.js` file is one tab.** Put it in the plugins folder, press Reload, and it gets the crawl's pages, links and images
+- **Sandboxed**: a plugin has no network access and cannot read your API keys, settings or files. It can draw in its tab and ask for a CSV or XLSX export, which you confirm in a save dialog
+- **Small UI kit** for sortable tables, stat tiles and export buttons, themed for light and dark
+- **Two example plugins** ship with the app: a per-folder breakdown and a generic anchor text audit
+- Full guide: [docs/PLUGINS.md](docs/PLUGINS.md)
 </details>
 
 ---
@@ -241,7 +253,7 @@ npm run dist         # → ./release  (NSIS .exe / DMG / AppImage for your OS)
 3. Hit **Start** — watch pages stream into the **Pages** tab live.
 4. Open **Settings**, add an AI key, then click **Analyze** for severity-scored issues and fixes.
 5. Open the **GEO** tab and hit **Run GEO/AEO Analysis** to score the crawl for AI search, and **Check llms.txt** to validate the file.
-6. **Export** as CSV/JSON, or explore the **Treemap** and **Issues** tabs.
+6. **Export** as CSV, JSON or XLSX, or explore the **Treemap**, **Issues** and **Phrases** tabs.
 
 ---
 
@@ -326,9 +338,41 @@ flowchart LR
 | Competitor discovery + content gaps | ✅ Bright Data | ❌ |
 | PDF client reports | ✅ | ❌ |
 | MCP server (AI agents) | ✅ | ✅ |
+| N-gram phrase analysis | ✅ | ✅ |
+| XLSX export | ✅ | ✅ |
+| Plugin tabs | ✅ Sandboxed JS files | ❌ |
 | Local data storage | ✅ SQLite | ✅ |
 | Cross-platform | ✅ Win/Mac/Linux | ✅ Win/Mac/Linux |
 | Open source | ✅ MIT | ❌ |
+
+---
+
+## 🧩 Plugins
+
+A plugin is one JavaScript file. This one is complete:
+
+```js
+// ==SerpentPlugin==
+// @name         Longest titles
+// @description  The 50 longest page titles in the crawl
+// ==/SerpentPlugin==
+
+serpent.register({
+  render({ root, ui, pages }) {
+    const rows = pages
+      .filter(p => p.title)
+      .map(p => ({ url: p.url, title: p.title, length: p.title.length }))
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 50);
+    root.append(ui.exportButton('Export CSV', rows, 'longest-titles'));
+    root.append(ui.table(rows));
+  },
+});
+```
+
+Open the **Plugins** tab, click **Open plugins folder**, save the file there and press **Reload**. **Add example plugins** installs two working ones to start from.
+
+Plugins run in a sandboxed frame: no network, no Node.js, no access to API keys or other crawls. The API, the data fields and the limits are in **[docs/PLUGINS.md](docs/PLUGINS.md)**.
 
 ---
 
@@ -412,6 +456,9 @@ serpent/
 │   │   ├── ai-analyzer.ts           # Multi-LLM analysis + issue recommendations
 │   │   ├── embeddings.ts            # Vector embeddings + semantic similarity
 │   │   ├── uncrawlable-links.ts     # Google crawlable-link guidance checks
+│   │   ├── link-health.ts           # Post-crawl broken link, image and sitemap checks
+│   │   ├── plugins.ts               # Plugin tabs: listing, sandbox page, runtime
+│   │   ├── xlsx-writer.ts           # Dependency-free XLSX export
 │   │   ├── gsc-client.ts            # Google Search Console OAuth + analytics
 │   │   ├── serp-client.ts           # SERP ranking via Bright Data
 │   │   ├── cost-tracker.ts          # Bright Data spend monitoring
@@ -420,9 +467,10 @@ serpent/
 │   ├── renderer/                    # React app (CrawlConfig, ResultsTabs, SiteMap, …)
 │   ├── test/                        # Vitest unit suites
 │   └── types/index.ts               # Shared TypeScript types
+├── resources/plugins/               # Example plugins shipped with the app
 ├── e2e/                             # Playwright end-to-end tests
 ├── package.json
-└── docs/                            # README assets
+└── docs/                            # README assets, PLUGINS.md
 ```
 
 ---
