@@ -1,4 +1,4 @@
-import { PageData, ImageData, PerformanceScore, PerformanceIssue, IssueSeverity } from '../types/index';
+import { PageData, ImageData, PerformanceScore, PerformanceIssue, IssueSeverity, isMissingAlt } from '../types/index';
 
 interface PerfInput {
   page: PageData;
@@ -82,7 +82,8 @@ function scoreImageOptimization(input: PerfInput): { score: number; issues: Perf
   const max = 100;
 
   // Check alt text coverage (25 pts)
-  const withAlt = images.filter(i => i.altText && i.altText.trim().length > 0).length;
+  // alt="" (decorative) is a valid alt, so it counts as covered.
+  const withAlt = images.filter(i => !isMissingAlt(i.altText)).length;
   const altRatio = withAlt / images.length;
   if (altRatio >= 0.95) {
     points += 25;

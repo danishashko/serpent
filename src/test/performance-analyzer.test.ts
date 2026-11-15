@@ -114,10 +114,18 @@ describe('Performance Analyzer', () => {
 
     it('scores images without alt text poorly', () => {
       const page = makePage();
-      const images = makeImages(5, { altText: '' });
+      const images = makeImages(5, { altText: null });
       const score = analyzePerformanceScore({ page, images });
       const imgIssues = score.issues.filter(i => i.category === 'images');
       expect(imgIssues.length).toBeGreaterThan(0);
+    });
+
+    it('does not penalise decorative images (alt="")', () => {
+      const page = makePage();
+      const images = makeImages(5, { altText: '' });
+      const score = analyzePerformanceScore({ page, images });
+      const altIssues = score.issues.filter(i => /alt text/i.test(i.message));
+      expect(altIssues).toEqual([]);
     });
 
     it('scores images without dimensions poorly', () => {

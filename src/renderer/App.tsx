@@ -35,7 +35,7 @@ declare global {
       onCrawlComplete: (cb: (crawlId: string) => void) => void;
       onCostLimit: (cb: (data: unknown) => void) => void;
       onAIProgress: (cb: (data: unknown) => void) => void;
-      onLinksUpdated: (cb: (crawlId: string) => void) => void;
+      onLinksUpdated: (cb: (crawlId: string, stage?: string) => void) => void;
       removeAllListeners: (channel: string) => void;
       embeddingsStatus: (crawlId: string) => Promise<EmbeddingStatus>;
       embeddingsGenerate: (req: EmbeddingRunConfig) => Promise<{ success: boolean; embedded?: number; skipped?: number; error?: string }>;
@@ -112,6 +112,10 @@ export default function App(): React.ReactElement {
   const [view, setView] = useState<View>('crawl');
   const [progress, setProgress] = useState<CrawlProgress | null>(null);
   const [activeCrawlId, setActiveCrawlId] = useState<string | null>(null);
+  // Mirror for IPC listeners, which are registered once and would otherwise
+  // close over the first render's value.
+  const activeCrawlIdRef = React.useRef<string | null>(null);
+  activeCrawlIdRef.current = activeCrawlId;
   const [pages, setPages] = useState<PageData[]>([]);
   const [links, setLinks] = useState<LinkData[]>([]);
   const [images, setImages] = useState<ImageData[]>([]);
@@ -224,9 +228,18 @@ export default function App(): React.ReactElement {
       );
     });
 
-    window.api.onLinksUpdated((crawlId: string) => {
-      // External link status check finished — refresh links data silently
+    window.api.onLinksUpdated((crawlId: string, stage?: string) => {
+      // A post-crawl link-health stage finished. Only refresh if the user is
+      // still looking at that crawl — otherwise its rows would replace the
+      // ones on screen.
+      if (activeCrawlIdRef.current !== crawlId) return;
       window.api.getLinks(crawlId).then(l => setLinks(l as LinkData[])).catch(() => {});
+      // The per-page counters behind the link, image and sitemap issues live
+      // on the page rows, so those have to be re-read as well.
+      window.api.getPages(crawlId).then(p => setPages(p)).catch(() => {});
+      if (stage === 'images') {
+        window.api.getImages(crawlId).then(i => setImages(i as ImageData[])).catch(() => {});
+      }
     });
 
     return () => {

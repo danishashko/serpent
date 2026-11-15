@@ -6,20 +6,22 @@
 // Categories follow common SEO crawler taxonomy where reasonable:
 //   page_titles, meta_description, headings, canonicals, directives,
 //   response_codes, urls, images, links, security, social, structured_data,
-//   content, accessibility.
+//   content, accessibility, sitemaps.
 //
 // Each detector returns `true` if the page IS affected by the issue.
 // `computeIssues()` builds an IssueInstance per issue id with the list of
 // affected URLs.
 
 import type {
+  ImageData,
   IssueCategory,
   IssueDefinition,
   IssueInstance,
   IssueSeverity,
+  LinkData,
   PageData,
 } from '../../types/index';
-import { isHtmlPage } from '../../types/index';
+import { isGoneStatus, isHtmlPage } from '../../types/index';
 import { hammingDistanceHex, NEAR_DUPLICATE_MAX_DISTANCE } from '../../main/simhash';
 
 // Configurable thresholds (mirror SF defaults).
@@ -224,9 +226,37 @@ export const DETECTORS: Detector[] = [
   d('uncrawlable_outlinks', 'links', 'warning', 'Pages With Uncrawlable Internal Outlinks',
     'Page links internally with markup search engines cannot reliably follow — an href on a non-anchor element, a javascript: href, or an onclick handler with no href.',
     (p) => (p.uncrawlableOutlinks ?? 0) > 0),
+  // Link health. These counters are written by the post-crawl pass
+  // (link-health.ts), not by the page parse, so they read 0 until that pass
+  // has run — a crawl still being checked simply shows fewer issues for a
+  // moment, never false ones.
+  d('broken_internal_links', 'links', 'warning', 'Pages Linking To Broken Internal URLs',
+    'Page links to an internal URL that returned a 4xx/5xx error or could not be fetched. Visitors and crawlers hit a dead end; fix or remove the link.',
+    (p) => (p.brokenOutlinks ?? 0) > 0),
+  d('links_to_redirects', 'links', 'opportunity', 'Pages Linking To Redirecting Internal URLs',
+    'Page links to an internal URL that redirects. Each hop costs crawl budget and load time; link straight to the final URL.',
+    (p) => (p.redirectOutlinks ?? 0) > 0),
+  d('broken_external_links', 'links', 'warning', 'Pages Linking To Broken External URLs',
+    'Page links out to a URL that is gone: it returned 404 or 410, or its host no longer resolves. Sites that merely block bots (403, 429) are not counted.',
+    (p) => (p.brokenExternalOutlinks ?? 0) > 0),
   d('high_image_count', 'images', 'info', 'High Image Count (>50)',
     'Page contains an unusually high number of images — review weight & alt text.',
     (p) => p.statusCode === 200 && (p.imageCount ?? 0) > 50),
+  d('broken_images', 'images', 'warning', 'Pages With Broken Images',
+    'Page embeds an image whose file returned 404 or 410, so visitors see a broken-image placeholder.',
+    (p) => (p.brokenImages ?? 0) > 0),
+
+  // ── Sitemaps
+  // `inSitemap` is null until the sitemap audit has run and found a sitemap,
+  // so neither check can fire on a site without one or on an unaudited crawl.
+  // It arrives from SQLite as 0/1, hence the truthiness tests rather than
+  // comparisons against true/false.
+  d('non_indexable_in_sitemap', 'sitemaps', 'warning', 'Non-Indexable URL In XML Sitemap',
+    'URL is listed in the XML sitemap but cannot be indexed: it redirects, errors, is noindex or is canonicalised elsewhere. A sitemap should list only the URLs you want indexed.',
+    (p) => p.inSitemap != null && !!p.inSitemap && (p.statusCode !== 200 || !p.isIndexable)),
+  d('not_in_sitemap', 'sitemaps', 'opportunity', 'Indexable Page Missing From XML Sitemap',
+    'Page is indexable and reachable by links but is not listed in the XML sitemap, so search engines get no explicit signal to crawl it.',
+    (p) => p.inSitemap != null && !p.inSitemap && p.statusCode === 200 && p.isIndexable && isHtmlPage(p)),
 
   // ── Accessibility
   // Rolled up from the per-page static WCAG audit. `a11yScore === null` means
@@ -241,6 +271,60 @@ export const DETECTORS: Detector[] = [
     `Page scores under ${A11Y_MIN_SCORE}/100 across the static WCAG rules. Note that colour contrast is not evaluated, so the real score can only be lower.`,
     (p) => p.a11yScore != null && p.a11yScore < A11Y_MIN_SCORE),
 ];
+
+// ─── Link-health targets ──────────────────────────────────────────────────────
+
+export interface IssueTarget {
+  url: string;
+  status: number | null;
+}
+
+/** Issue ids whose affected page is only half the finding — the other half is which target is broken. */
+export const TARGETED_ISSUE_IDS: ReadonlySet<string> = new Set([
+  'broken_internal_links',
+  'links_to_redirects',
+  'broken_external_links',
+  'broken_images',
+]);
+
+/**
+ * For a link-health issue, the offending targets per affected page: the
+ * broken or redirecting URLs it links to, or its broken image files. The
+ * rules mirror recomputeLinkHealth() in database.ts, which decides WHETHER a
+ * page is affected; this only names what it found there. Returns an empty map
+ * for any other issue id.
+ */
+export function issueTargets(issueId: string, links: LinkData[], images: ImageData[] = []): Map<string, IssueTarget[]> {
+  const out = new Map<string, IssueTarget[]>();
+  if (!TARGETED_ISSUE_IDS.has(issueId)) return out;
+  const seen = new Set<string>();
+  const add = (page: string, url: string, status: number | null): void => {
+    const key = page + '\n' + url;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const list = out.get(page);
+    if (list) list.push({ url, status }); else out.set(page, [{ url, status }]);
+  };
+
+  if (issueId === 'broken_images') {
+    for (const i of images) {
+      if (i.statusCode === 404 || i.statusCode === 410) add(i.pageUrl, i.imageUrl, i.statusCode);
+    }
+    return out;
+  }
+
+  for (const l of links) {
+    const s = l.statusCode ?? null;
+    if (s == null) continue;
+    if (l.isInternal) {
+      if (issueId === 'broken_internal_links' && (s === 0 || s >= 400)) add(l.sourceUrl, l.targetUrl, s);
+      else if (issueId === 'links_to_redirects' && s >= 300 && s < 400) add(l.sourceUrl, l.targetUrl, s);
+    } else if (issueId === 'broken_external_links' && isGoneStatus(s)) {
+      add(l.sourceUrl, l.targetUrl, s);
+    }
+  }
+  return out;
+}
 
 // ─── Public computeIssues() ───────────────────────────────────────────────────
 
@@ -304,6 +388,7 @@ export function getCategories(): IssueCategory[] {
     'structured_data',
     'links',
     'images',
+    'sitemaps',
     'accessibility',
   ];
 }
@@ -324,6 +409,7 @@ export function categoryLabel(c: IssueCategory): string {
     case 'structured_data': return 'Structured Data';
     case 'content': return 'Content';
     case 'accessibility': return 'Accessibility';
+    case 'sitemaps': return 'Sitemaps';
   }
 }
 

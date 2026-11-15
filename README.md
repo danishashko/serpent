@@ -69,7 +69,7 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - **Configurable User-Agent** (Googlebot, Bingbot, Chrome presets or custom), **custom HTTP headers**, **HTTP Basic auth** (scoped to the host you entered it for — never forwarded across an off-host redirect), and **session cookies** for authenticated crawls
 - **Scheduled crawls** — recurring local crawls that run while the app is open, with optional **auto-compare** that diffs each run against the previous one
 - **Crawl retention** — optionally auto-delete crawls after 30/60/90 days, with a per-crawl lock to keep the ones that matter
-- **Headless CLI mode** — `serpent --headless-crawl=<url> --output=pages.csv` crawls and exports without opening a window
+- **Headless CLI mode** — `serpent --headless-crawl=<url> --output=pages.csv` crawls and exports without opening a window (`--no-link-checks` skips the external link, image and sitemap pass)
 - **Pause / Resume / Stop** with persistent crawl state and cost continuity
 - **Crawl comparison** — diff any two crawls to see new, removed, and changed pages
 </details>
@@ -83,6 +83,9 @@ Serpent is a desktop site crawler that brings enterprise-grade technical SEO aud
 - Image inventory — alt text, dimensions, format, and lazy-load detection
 - Word count, page size, and text-to-HTML ratio
 - **Redirect chain detection** — every hop with status codes
+- **Broken link detection**: every page that links to a dead internal URL, a dead external URL (404, 410 or a host that no longer resolves) or a redirecting internal URL, with the offending link named. Sites that only block bots (403, 429) are not reported as broken
+- **Broken image detection**: image files that return 404 or 410
+- **XML sitemap audit**: finds the sitemap from `robots.txt`, then flags non-indexable URLs listed in it and indexable pages missing from it
 - **Duplicate content detection** — exact (SHA-256) and **near-duplicate** (64-bit simhash, ~90%+ similarity)
 - **Uncrawlable link detection** — `<div href>`, `javascript:` hrefs, and onclick-only anchors that search engines can't reliably follow
 - **HTML over 2MB** — Googlebot only reads the first 2MB of a document
@@ -339,13 +342,13 @@ Serpent runs a built-in **Model Context Protocol** server at **`http://127.0.0.1
 |------|-------------|
 | `start_crawl` | Start a crawl by URL. Returns a `crawl_id`. |
 | `stop_crawl` | Stop the currently running crawl. |
-| `get_crawl_status` | Get live progress of the active crawl. |
+| `get_crawl_status` | Get live progress of the active crawl and of the link checks that follow it. |
 | `list_crawls` | List all past crawls in the database. |
 | `get_results` | Get page-level SEO data for a crawl (paginated). |
-| `get_issues` | Get SEO issues grouped by severity. |
+| `get_issues` | Get SEO issues grouped by severity, including broken links, broken images and XML sitemap mismatches. |
 | `export_csv` | Export full crawl data as CSV text. |
 | `get_links` | Get the internal link graph as source→target pairs with anchor text, for orphan pages and link equity. |
-| `get_images` | Audit crawled images: missing alt text, format, lazy-loading status. |
+| `get_images` | Audit crawled images: missing alt text, format, lazy-loading status, HTTP status. |
 | `get_settings` | Check which crawl engines and features are configured. |
 | `set_settings` | Save Bright Data credentials so the `brightdata` engine becomes available. |
 

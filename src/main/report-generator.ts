@@ -1,6 +1,6 @@
 import { BrowserWindow, dialog } from 'electron';
 import fs from 'fs';
-import { PageData, LinkData, ImageData, GEOScore, PerformanceScore, ReportConfig, ReportSection } from '../types/index';
+import { PageData, LinkData, ImageData, GEOScore, PerformanceScore, ReportConfig, ReportSection, isMissingAlt } from '../types/index';
 
 interface ReportData {
   config: ReportConfig;
@@ -269,7 +269,7 @@ function buildSecurity(data: ReportData): string {
 
 function buildImages(data: ReportData): string {
   const { images } = data;
-  const missingAlt = images.filter(i => !i.altText || !i.altText.trim()).length;
+  const missingAlt = images.filter(i => isMissingAlt(i.altText)).length;
   const missingDims = images.filter(i => !i.hasWidth || !i.hasHeight).length;
   const lazyLoaded = images.filter(i => i.isLazy).length;
 

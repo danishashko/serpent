@@ -25,12 +25,23 @@ vi.mock('keytar', () => ({
 vi.mock('../main/database', () => ({
   getAllCrawls: vi.fn().mockReturnValue([]),
   getPagesByCrawl: vi.fn().mockReturnValue([]),
+  getLinksByCrawl: vi.fn().mockReturnValue([]),
+  getImagesByCrawl: vi.fn().mockReturnValue([]),
+  getLinkHealthSummary: vi.fn().mockReturnValue(null),
   initDatabase: vi.fn(),
+}));
+
+// ── Mock link-health ────────────────────────────────────────────────────────
+// The suite runs with a shared module cache (isolate: false). Loading the real
+// link-health here would cache it bound to the mocked database above and
+// break link-health.test.ts, which needs it bound to the real one.
+vi.mock('../main/link-health', () => ({
+  getPostCrawlStage: vi.fn().mockReturnValue(null),
 }));
 
 // ── Import after mocks are in place ────────────────────────────────────────
 import { startMcpServer } from '../main/mcp-server';
-import { getPagesByCrawl } from '../main/database';
+import { getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getLinkHealthSummary } from '../main/database';
 
 // ── Minimal CrawlOrchestrator stub ─────────────────────────────────────────
 function makeMockOrchestrator() {
@@ -328,6 +339,88 @@ describe('MCP HTTP server', () => {
     for (const phrase of forbidden) {
       expect(allDetails.some((detail) => detail.includes(phrase))).toBe(false);
     }
+  });
+
+  it('get_issues reports a redirect as a redirect, not as a non-indexable page', async () => {
+    const base = {
+      title: 'A page title that is fine', titleLength: 25, metaDescription: 'A description here that is fine.',
+      h1: 'H', h1Count: 1, responseTimeMs: 100, ogImage: 'x', hasStructuredData: true, wordCount: 500, h2Count: 1,
+      contentType: 'text/html',
+    };
+    const pages = [
+      // 301: isIndexable is false, but the finding is the redirect.
+      { ...base, url: 'http://example.com/old', statusCode: 301, isIndexable: false, canonicalUrl: null, contentType: null },
+      // Canonicalised elsewhere: already reported as "Canonicalized to …".
+      { ...base, url: 'http://example.com/dup', statusCode: 200, isIndexable: false, canonicalUrl: 'http://example.com/main' },
+      // noindex on a 200: the one real "non-indexable" warning.
+      { ...base, url: 'http://example.com/hidden', statusCode: 200, isIndexable: false, canonicalUrl: 'http://example.com/hidden' },
+    ];
+    vi.mocked(getPagesByCrawl).mockReturnValueOnce(pages as unknown as ReturnType<typeof getPagesByCrawl>);
+    const sessionId = await initSession();
+    const r = await callTool(sessionId, 'get_issues', { crawl_id: 'x' });
+    const data = JSON.parse(r.text) as { issues: { warning: Array<{ url: string; details: string }>; info: Array<{ url: string; details: string }> } };
+    const nonIndexable = data.issues.warning.filter((i) => i.details.includes('non-indexable')).map((i) => i.url);
+    expect(nonIndexable).toEqual(['http://example.com/hidden']);
+    expect(data.issues.info).toContainEqual({ url: 'http://example.com/old', details: 'Redirect (HTTP 301)' });
+    expect(data.issues.info.some((i) => i.url === 'http://example.com/dup' && i.details.startsWith('Canonicalized to'))).toBe(true);
+  });
+
+  it('get_issues names broken link, image and sitemap findings per page', async () => {
+    const base = {
+      statusCode: 200, contentType: 'text/html', title: 'A page title that is fine', titleLength: 25,
+      metaDescription: 'A description here that is fine.', isIndexable: true, h1: 'H', h1Count: 1,
+      responseTimeMs: 100, ogImage: 'x', hasStructuredData: true, wordCount: 500, h2Count: 1,
+    };
+    const pages = [
+      { ...base, url: 'http://example.com/', canonicalUrl: 'http://example.com/', brokenOutlinks: 1, redirectOutlinks: 1, brokenExternalOutlinks: 1, brokenImages: 1, inSitemap: 1 },
+      { ...base, url: 'http://example.com/unlisted', canonicalUrl: 'http://example.com/unlisted', inSitemap: 0 },
+      { ...base, url: 'http://example.com/hidden', canonicalUrl: 'http://example.com/hidden', isIndexable: false, inSitemap: 1 },
+    ];
+    vi.mocked(getPagesByCrawl).mockReturnValueOnce(pages as unknown as ReturnType<typeof getPagesByCrawl>);
+    vi.mocked(getLinksByCrawl).mockReturnValueOnce([
+      { sourceUrl: 'http://example.com/', targetUrl: 'http://example.com/gone', isInternal: true, statusCode: 404 },
+      { sourceUrl: 'http://example.com/', targetUrl: 'http://example.com/moved', isInternal: true, statusCode: 301 },
+      { sourceUrl: 'http://example.com/', targetUrl: 'https://partner.test/dead', isInternal: false, statusCode: 0 },
+      { sourceUrl: 'http://example.com/', targetUrl: 'https://waf.test/', isInternal: false, statusCode: 403 },
+    ] as unknown as ReturnType<typeof getLinksByCrawl>);
+    vi.mocked(getImagesByCrawl).mockReturnValueOnce([
+      { pageUrl: 'http://example.com/', imageUrl: 'http://example.com/a.png', statusCode: 404 },
+      { pageUrl: 'http://example.com/', imageUrl: 'http://example.com/b.png', statusCode: 403 },
+    ] as unknown as ReturnType<typeof getImagesByCrawl>);
+    vi.mocked(getLinkHealthSummary).mockReturnValueOnce({ state: 'done' });
+
+    const sessionId = await initSession();
+    const r = await callTool(sessionId, 'get_issues', { crawl_id: 'x' });
+    const data = JSON.parse(r.text) as {
+      post_crawl_checks: { state: string };
+      issues: { warning: Array<{ url: string; details: string }>; info: Array<{ url: string; details: string }> };
+    };
+    expect(data.post_crawl_checks.state).toBe('done');
+    const warn = data.issues.warning.map((i) => `${i.url} :: ${i.details}`);
+    const info = data.issues.info.map((i) => `${i.url} :: ${i.details}`);
+    expect(warn).toContain('http://example.com/ :: Links to 1 broken internal URL(s): http://example.com/gone (404)');
+    expect(warn).toContain('http://example.com/ :: Links to 1 broken external URL(s): https://partner.test/dead (unreachable)');
+    expect(warn).toContain('http://example.com/ :: 1 broken image(s): http://example.com/a.png (404)');
+    expect(info).toContain('http://example.com/ :: Links to 1 redirecting internal URL(s): http://example.com/moved (301)');
+    expect(info).toContain('http://example.com/unlisted :: Indexable page missing from the XML sitemap');
+    expect(warn.some((w) => w.startsWith('http://example.com/hidden :: Listed in the XML sitemap but not indexable'))).toBe(true);
+    // A 403 from a third party is never reported as broken.
+    expect(warn.join('\n')).not.toContain('waf.test');
+    expect(warn.join('\n')).not.toContain('b.png');
+  });
+
+  it('get_images counts alt="" as decorative, not missing', async () => {
+    vi.mocked(getImagesByCrawl).mockReturnValueOnce([
+      { pageUrl: 'http://example.com/', imageUrl: 'http://example.com/none.png', altText: null },
+      { pageUrl: 'http://example.com/', imageUrl: 'http://example.com/spacer.png', altText: '' },
+      { pageUrl: 'http://example.com/', imageUrl: 'http://example.com/photo.png', altText: 'A photo' },
+    ] as unknown as ReturnType<typeof getImagesByCrawl>);
+    const sessionId = await initSession();
+    const r = await callTool(sessionId, 'get_images', { crawl_id: 'x', missing_alt_only: true });
+    const data = JSON.parse(r.text) as { missing_alt_count: number; decorative_alt_count: number; images: Array<{ src: string }> };
+    expect(data.missing_alt_count).toBe(1);
+    expect(data.decorative_alt_count).toBe(1);
+    expect(data.images.map((i) => i.src)).toEqual(['http://example.com/none.png']);
   });
 
   it('export_csv neutralizes spreadsheet formula injection in page fields', async () => {

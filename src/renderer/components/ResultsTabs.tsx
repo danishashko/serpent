@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore, UncrawlableReason, UNCRAWLABLE_REASON_LABELS, LlmsTxtResult } from '../../types/index';
+import { PageData, LinkData, ImageData, SerpResultRow, RedirectData, HreflangData, CustomExtractionResult, IssueSeverity, IssueRecommendation, CrawlDiff, CrawlRecord, GEOScore, PerformanceScore, ReportConfig, DiscoverResult, ContentGap, PsiScore, UncrawlableReason, UNCRAWLABLE_REASON_LABELS, LlmsTxtResult, isMissingAlt } from '../../types/index';
 import CrawlComparison from './CrawlComparison';
 import SiteMap from './SiteMap';
 import ExportModal from './ExportModal';
@@ -99,9 +99,12 @@ const metaLengthColor = (len: number): string => {
 const statusColor = (code: number): string => {
   if (code === 200) return 'var(--accent-green)';
   if (code >= 300 && code < 400) return 'var(--accent-orange)';
-  if (code >= 400) return 'var(--accent-red)';
+  if (code >= 400 || code === 0) return 'var(--accent-red)';
   return 'var(--text-muted)';
 };
+
+// 0 is the stored marker for "no answer at all" (network error, dead host).
+const statusLabel = (code: number): string => (code === 0 ? 'ERR' : String(code));
 
 const headingLengthColor = (len: number | null): string => {
   if (!len) return 'var(--text-muted)';
@@ -514,6 +517,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
           source_url: l.sourceUrl, target_url: l.targetUrl, anchor_text: l.anchorText ?? '',
           type: l.isInternal ? 'internal' : 'external', rel: l.relAttr ?? '',
           crawlability: l.crawlability ?? 'crawlable', uncrawlable_reason: l.uncrawlableReason ?? '',
+          status_code: l.statusCode ?? '',
         })),
         filename: `${prefix}-links.${ext}`,
       };
@@ -525,6 +529,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
           image_url: img.imageUrl, alt_text: img.altText ?? '', source_page: img.pageUrl,
           format: img.format ?? '', has_width: img.hasWidth ? 'true' : 'false',
           has_height: img.hasHeight ? 'true' : 'false', is_lazy: img.isLazy ? 'true' : 'false',
+          status_code: img.statusCode ?? '',
         })),
         filename: `${prefix}-images.${ext}`,
       };
@@ -1074,7 +1079,7 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
 
         {tab === 'issues_v2' && (
           <div style={{ height: '100%', padding: 12 }}>
-            <IssuesTab pages={pages} links={links} />
+            <IssuesTab pages={pages} links={links} images={images} />
           </div>
         )}
 
@@ -1145,14 +1150,14 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                     {l.relAttr?.includes('nofollow') ? 'nofollow' : ''}
                   </td>
                   <td style={{ fontSize: 11, textAlign: 'center' }}>
-                    {!l.isInternal && l.statusCode != null ? (
+                    {l.statusCode != null ? (
                       <span style={{
                         padding: '2px 6px',
                         borderRadius: 4,
                         background: 'var(--tint-gray)',
                         color: statusColor(l.statusCode),
                         fontWeight: 600,
-                      }}>{l.statusCode}</span>
+                      }}>{statusLabel(l.statusCode)}</span>
                     ) : (
                       <span style={{ color: 'var(--text-muted)' }}>—</span>
                     )}
@@ -1178,12 +1183,13 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                 <th>Width Attr</th>
                 <th>Height Attr</th>
                 <th>Lazy Load</th>
+                <th>Status</th>
                 <th>Source Page</th>
               </tr>
             </thead>
             <tbody>
               {images.length === 0 ? (
-                <tr><td colSpan={7} className="table-empty">No images collected yet</td></tr>
+                <tr><td colSpan={8} className="table-empty">No images collected yet</td></tr>
               ) : (() => {
                 const filteredImages = images.filter(img => !search || img.imageUrl.toLowerCase().includes(search.toLowerCase()));
                 const capped = filteredImages.slice(0, MAX_RENDER_ROWS);
@@ -1192,19 +1198,26 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
                   <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <a href={img.imageUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-blue)', textDecoration: 'none' }}>{img.imageUrl}</a>
                   </td>
-                  <td style={{ color: img.altText ? 'var(--text-secondary)' : 'var(--accent-red)', fontSize: img.altText ? 13 : 11 }}>
-                    {img.altText || 'MISSING'}
+                  <td style={{ color: img.altText ? 'var(--text-secondary)' : isMissingAlt(img.altText) ? 'var(--accent-red)' : 'var(--text-muted)', fontSize: img.altText ? 13 : 11 }}>
+                    {img.altText || (isMissingAlt(img.altText) ? 'MISSING' : 'decorative (alt="")')}
                   </td>
                   <td>{img.format ?? '—'}</td>
                   <td>{img.hasWidth ? '✓' : '✗'}</td>
                   <td>{img.hasHeight ? '✓' : '✗'}</td>
                   <td>{img.isLazy ? '✓' : '✗'}</td>
+                  <td style={{ fontSize: 11, textAlign: 'center' }}>
+                    {img.statusCode != null ? (
+                      <span style={{ color: statusColor(img.statusCode), fontWeight: 600 }}>{statusLabel(img.statusCode)}</span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    )}
+                  </td>
                   <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
                     {img.pageUrl}
                   </td>
                 </tr>
               ))}{filteredImages.length > MAX_RENDER_ROWS && (
-                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary)' }}>
+                <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 12, fontSize: 12, background: 'var(--bg-secondary)' }}>
                   Showing first {MAX_RENDER_ROWS.toLocaleString()} of {filteredImages.length.toLocaleString()} rows. Use search to narrow, or Export to get the full dataset.
                 </td></tr>
               )}</>);
@@ -2086,7 +2099,8 @@ export default function ResultsTabs({ pages, links, images, serpResults, redirec
         ) : (
           <>
             <span>Total: {images.length}</span>
-            <span style={{ color: 'var(--accent-red)' }}>Missing alt: {images.filter(i => !i.altText).length}</span>
+            <span style={{ color: 'var(--accent-red)' }}>Missing alt: {images.filter(i => isMissingAlt(i.altText)).length}</span>
+            <span style={{ color: 'var(--accent-red)' }}>Broken: {images.filter(i => i.statusCode === 404 || i.statusCode === 410).length}</span>
           </>
         )}
         {filteredPages.length !== pages.length && tab !== 'links' && tab !== 'images' && (

@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import keytar from 'keytar';
-import { initDatabase, markRunningCrawlsAsInterrupted, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks, updateLinkStatusCodes } from './database';
-import { checkExternalLinkStatuses } from './external-link-checker';
+import { initDatabase, markRunningCrawlsAsInterrupted, getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getAIAnalysisByPage, upsertAIAnalysis, getConfig, setConfig, getUsageStats, getRedirectsByCrawl, getHreflangByCrawl, getDuplicatesByCrawl, getCustomExtractionsByCrawl, upsertIssueRecommendation, getIssueRecommendationsByCrawl, calculateLinkScores, compareCrawls, upsertGEOScoresBatch, getGEOScoresByCrawl, upsertPerformanceScoresBatch, getPerformanceScoresByCrawl, getInlinksForUrls, getOutlinksForUrls, getImagesForUrls, getInlinksToStatusCode, getPagesByStatusRange, getNonIndexablePages, getImagesMissingAlt, getInternalLinks, getExternalLinks, recomputeLinkHealth } from './database';
+import { runPostCrawlChecks } from './link-health';
 import { analyzeGEOBatch } from './geo-analyzer';
 import { analyzeLlmsTxt } from './llms-txt';
 import { analyzePerformanceBatch } from './performance-analyzer';
@@ -278,21 +278,26 @@ orchestrator.on('error', (err: Error) => {
   mainWindow?.webContents.send(IPC.CRAWL_ERROR, err.message);
 });
 
+// In-flight post-crawl passes, so the headless CLI can wait for the one it started.
+const postCrawlRuns = new Map<string, Promise<unknown>>();
+
 orchestrator.on('complete', (crawlId: string) => {
   calculateLinkScores(crawlId);
+  // Internal link health needs no network, so it is ready before the renderer
+  // loads the finished crawl.
+  try { recomputeLinkHealth(crawlId); } catch (err) { console.error('[LINK-HEALTH] internal pass failed:', err); }
   mainWindow?.webContents.send(IPC.CRAWL_COMPLETE, crawlId);
 
   runAutoCompare(crawlId);
 
-  // Check external link statuses in the background (non-blocking)
-  checkExternalLinkStatuses(crawlId)
-    .then(statusMap => {
-      if (statusMap.size > 0) {
-        updateLinkStatusCodes(crawlId, statusMap);
-        mainWindow?.webContents.send('crawl:links-updated', crawlId);
-      }
-    })
-    .catch(err => console.error('[EXTERNAL-LINKS] Status check failed:', err));
+  // External links, images and the sitemap audit run in the background
+  // (non-blocking); the renderer refreshes as each stage lands.
+  const run = runPostCrawlChecks(crawlId, {
+    onStage: (stage) => mainWindow?.webContents.send('crawl:links-updated', crawlId, stage),
+  })
+    .catch(err => console.error('[LINK-HEALTH] post-crawl checks failed:', err))
+    .finally(() => postCrawlRuns.delete(crawlId));
+  postCrawlRuns.set(crawlId, run);
 });
 
 orchestrator.on('cost-limit-warning', (data: { currentSpend: number; limit: number }) => {
@@ -378,7 +383,14 @@ async function runHeadlessCrawl(url: string): Promise<void> {
       console.log(`[SERPENT] crawled ${p.completed}/${p.total}`);
     }
   });
-  orchestrator.on('complete', (crawlId: string) => {
+  orchestrator.on('complete', async (crawlId: string) => {
+    // The app-level 'complete' handler (registered first) has already started
+    // the post-crawl link checks. Wait for them so the CSV carries the broken
+    // link / image / sitemap columns, unless told not to.
+    if (!process.argv.includes('--no-link-checks')) {
+      console.log('[SERPENT] crawl finished — checking external links, images and sitemap (--no-link-checks to skip)');
+      await postCrawlRuns.get(crawlId);
+    }
     const pages = getPagesByCrawl(crawlId);
     const csv = buildCsvString(pages.map(pageToFullRow));
     fs.writeFileSync(output, csv, 'utf8');
@@ -1326,6 +1338,9 @@ function pageToFullRow(p: PageData): Record<string, unknown> {
     has_hsts: p.hasHSTS ? 'true' : 'false', has_csp: p.hasCSP ? 'true' : 'false',
     x_frame_options: p.xFrameOptions ?? '', x_content_type_options: p.xContentTypeOptions ?? '',
     image_count: p.imageCount, link_score: p.linkScore, content_hash: p.contentHash ?? '',
+    broken_internal_links: p.brokenOutlinks ?? 0, links_to_redirects: p.redirectOutlinks ?? 0,
+    broken_external_links: p.brokenExternalOutlinks ?? 0, broken_images: p.brokenImages ?? 0,
+    in_sitemap: p.inSitemap == null ? '' : (p.inSitemap ? 'true' : 'false'),
   };
 }
 
@@ -1333,6 +1348,7 @@ function linkToRow(l: LinkData): Record<string, unknown> {
   return {
     source_url: l.sourceUrl, target_url: l.targetUrl, anchor_text: l.anchorText ?? '',
     type: l.isInternal ? 'internal' : 'external', rel: l.relAttr ?? '',
+    status_code: l.statusCode ?? '',
   };
 }
 
@@ -1341,6 +1357,7 @@ function imageToRow(img: ImageData): Record<string, unknown> {
     image_url: img.imageUrl, source_page: img.pageUrl, alt_text: img.altText ?? '',
     format: img.format ?? '', has_width: img.hasWidth ? 'true' : 'false',
     has_height: img.hasHeight ? 'true' : 'false', is_lazy: img.isLazy ? 'true' : 'false',
+    status_code: img.statusCode ?? '',
   };
 }
 

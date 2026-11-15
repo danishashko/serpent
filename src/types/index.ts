@@ -135,6 +135,39 @@ export interface PageData {
   a11yViolations: string | null;
   /** Body text, capped, stored only when the crawl enabled extractBodyText. */
   bodyText?: string | null;
+  // ── Link health. Filled by the post-crawl pass (link-health.ts), so they are
+  // absent on a page object that has not been through the database yet.
+  /** Internal outlinks whose target returned 4xx/5xx or could not be fetched. */
+  brokenOutlinks?: number;
+  /** Internal outlinks whose target answered with a redirect. */
+  redirectOutlinks?: number;
+  /** External outlinks whose target is gone (404, 410 or an unreachable host). */
+  brokenExternalOutlinks?: number;
+  /** Images on this page whose file is gone (404 or 410). */
+  brokenImages?: number;
+  /** Listed in the site's XML sitemap. Null when no sitemap was found or the audit has not run. */
+  inSitemap?: boolean | null;
+}
+
+// An <img> with no alt attribute is a defect. alt="" is not: it is how HTML
+// marks an image as decorative, and screen readers skip it by design. The
+// crawlers store the two differently (null vs ''), so every "missing alt"
+// count must go through this rather than a truthiness check, which lumps
+// decorative images in with the broken ones. A whitespace-only alt is neither
+// empty nor descriptive and counts as missing.
+export function isMissingAlt(altText: string | null | undefined): boolean {
+  if (altText == null) return true;
+  return altText !== '' && altText.trim() === '';
+}
+
+// Whether a status seen on a link or image target means the resource is gone.
+// Deliberately narrow for targets we did not crawl ourselves: 401/403/429 and
+// most 5xx from a third-party host mean "this server refused a bot", not "the
+// link is dead", and reporting them floods the list with false positives.
+// 0 is our marker for a host that could not be reached at all (DNS failure,
+// connection refused).
+export function isGoneStatus(status: number | null | undefined): boolean {
+  return status === 404 || status === 410 || status === 0;
 }
 
 // A PDF, image or other non-HTML resource returning HTTP 200 has no <title>,
@@ -197,6 +230,8 @@ export interface ImageData {
   hasWidth: boolean;
   hasHeight: boolean;
   isLazy: boolean;
+  /** HTTP status of the image file, from the post-crawl check. Null until checked. */
+  statusCode?: number | null;
 }
 
 export interface RedirectData {
@@ -644,7 +679,8 @@ export type IssueCategory =
   | 'social'
   | 'structured_data'
   | 'content'
-  | 'accessibility';
+  | 'accessibility'
+  | 'sitemaps';
 
 export interface IssueDefinition {
   id: string;            // unique id e.g. "missing_title"
@@ -661,6 +697,44 @@ export interface IssueInstance {
   title: string;
   description: string;
   affectedUrls: string[];
+}
+
+// ─── Link health (post-crawl pass) ─────────────────────────────────────────────
+
+export type PostCrawlStage = 'internal_links' | 'external_links' | 'images' | 'sitemap';
+
+export interface ProbeStageSummary {
+  /** Distinct targets eligible for a status probe. */
+  total: number;
+  /** Targets that answered. */
+  checked: number;
+  /** True when the per-stage cap or time budget cut the stage short. */
+  truncated: boolean;
+}
+
+export interface LinkHealthSummary {
+  /** 'running' in a stored summary means the app closed mid-pass. */
+  state: 'running' | 'done';
+  startedAt: string;
+  finishedAt: string | null;
+  externalLinks: ProbeStageSummary;
+  images: ProbeStageSummary;
+  /** Null when the audit did not run (list-mode crawl, or the pass was cut short). */
+  sitemap: {
+    found: boolean;
+    sitemapUrls: string[];
+    urlsInSitemap: number;
+    notInSitemap: number;
+    nonIndexableInSitemap: number;
+    orphanFromSitemap: number;
+    errors: string[];
+  } | null;
+  totals: {
+    pagesWithBrokenOutlinks: number;
+    pagesWithRedirectOutlinks: number;
+    pagesWithBrokenExternalOutlinks: number;
+    pagesWithBrokenImages: number;
+  };
 }
 
 // ─── Sitemap (XML) ─────────────────────────────────────────────────────────────

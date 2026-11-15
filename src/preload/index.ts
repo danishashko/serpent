@@ -25,8 +25,8 @@ contextBridge.exposeInMainWorld('api', {
   onAIProgress: (cb: (data: unknown) => void) => {
     ipcRenderer.on(IPC.AI_ANALYZE_PROGRESS, (_event, data) => cb(data));
   },
-  onLinksUpdated: (cb: (crawlId: string) => void) => {
-    ipcRenderer.on('crawl:links-updated', (_event, crawlId) => cb(crawlId));
+  onLinksUpdated: (cb: (crawlId: string, stage?: string) => void) => {
+    ipcRenderer.on('crawl:links-updated', (_event, crawlId, stage) => cb(crawlId, stage));
   },
 
   // Remove event listeners

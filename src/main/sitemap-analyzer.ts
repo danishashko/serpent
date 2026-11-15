@@ -33,11 +33,51 @@ export const defaultDeps: AnalyzerDeps = {
   },
 };
 
+/**
+ * Find a site's XML sitemap(s) without being told where they are: the
+ * `Sitemap:` lines of robots.txt first, then the two conventional paths.
+ * Returns an empty list when the site publishes none.
+ */
+export async function discoverSitemapUrls(
+  origin: string,
+  deps: AnalyzerDeps = defaultDeps,
+): Promise<string[]> {
+  const found: string[] = [];
+  try {
+    const robots = await deps.fetch(`${origin}/robots.txt`);
+    if (robots.status < 400) {
+      for (const line of robots.data.toString('utf8').split(/\r?\n/)) {
+        const m = /^\s*sitemap\s*:\s*(\S+)/i.exec(line);
+        if (!m) continue;
+        try {
+          // Relative Sitemap: values are not valid per the spec but do occur.
+          found.push(new URL(m[1], `${origin}/`).toString());
+        } catch { /* unparseable — skip */ }
+      }
+    }
+  } catch { /* no robots.txt — fall through to the conventional paths */ }
+  if (found.length > 0) return Array.from(new Set(found));
+
+  for (const path of ['/sitemap.xml', '/sitemap_index.xml']) {
+    try {
+      const resp = await deps.fetch(`${origin}${path}`);
+      if (resp.status >= 400) continue;
+      // A soft-404 HTML page answers 200 here on many sites; only accept a
+      // body that is actually a sitemap (or gzip, which is checked on parse).
+      const head = resp.data.subarray(0, 2048).toString('utf8');
+      const isGzip = resp.data.length >= 2 && resp.data[0] === 0x1f && resp.data[1] === 0x8b;
+      if (isGzip || /<(urlset|sitemapindex)[\s>]/i.test(head)) return [`${origin}${path}`];
+    } catch { /* try the next path */ }
+  }
+  return [];
+}
+
 export async function analyzeSitemap(
-  sitemapUrl: string,
+  sitemapUrl: string | string[],
   crawledPages: PageData[],
   deps: AnalyzerDeps = defaultDeps,
 ): Promise<SitemapAnalysisResult> {
+  const entryUrls = Array.isArray(sitemapUrl) ? sitemapUrl : [sitemapUrl];
   const errors: string[] = [];
   const fetched: string[] = [];
   const urlCounts = new Map<string, number>();
@@ -101,7 +141,7 @@ export async function analyzeSitemap(
     }
   }
 
-  await process(sitemapUrl, 0);
+  for (const entry of entryUrls) await process(entry, 0);
 
   // Build sets for diff.
   const sitemapUrls = new Set(urlCounts.keys());
@@ -133,7 +173,7 @@ export async function analyzeSitemap(
   }
 
   return {
-    sitemapUrl,
+    sitemapUrl: entryUrls[0] ?? '',
     fetchedSitemaps: fetched,
     urlsInSitemap: Array.from(sitemapUrls).sort(),
     notInSitemap: notInSitemap.sort(),

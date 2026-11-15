@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { PageData, LinkData, IssueCategory, IssueInstance, IssueSeverity } from '../../types/index';
-import { computeIssues, categoryLabel, getCategories } from '../lib/issues-detector';
+import { PageData, LinkData, ImageData, IssueCategory, IssueInstance, IssueSeverity } from '../../types/index';
+import { computeIssues, categoryLabel, getCategories, issueTargets, TARGETED_ISSUE_IDS } from '../lib/issues-detector';
 
 interface Props {
   pages: PageData[];
   links?: LinkData[];
+  images?: ImageData[];
 }
 
 const SEVERITY_ORDER: Record<IssueSeverity, number> = {
@@ -20,6 +21,9 @@ const SEVERITY_COLOR: Record<IssueSeverity, string> = {
   opportunity: 'var(--accent-blue)',
   info: 'var(--text-secondary)',
 };
+
+// Offending targets listed under each affected page before deferring to the CSV.
+const MAX_TARGETS_SHOWN = 10;
 
 // Build a map of targetUrl → source URLs for the inlinks export
 function buildInlinkMap(links: LinkData[]): Map<string, string[]> {
@@ -37,7 +41,7 @@ function escapeCsvCell(v: unknown): string {
   return (s.includes(',') || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export default function IssuesTab({ pages, links = [] }: Props): React.ReactElement {
+export default function IssuesTab({ pages, links = [], images = [] }: Props): React.ReactElement {
   const issues = useMemo(() => computeIssues(pages), [pages]);
 
   const byCategory = useMemo(() => {
@@ -73,11 +77,29 @@ export default function IssuesTab({ pages, links = [] }: Props): React.ReactElem
 
   const inlinkMap = useMemo(() => buildInlinkMap(links), [links]);
 
+  // Link-health issues list the page that carries the bad link; this names the
+  // link itself, so the finding is actionable without a trip to the Links tab.
+  const safeIssueId = safeIssue?.id ?? '';
+  const targets = useMemo(
+    () => issueTargets(safeIssueId, links, images),
+    [safeIssueId, links, images],
+  );
+  const hasTargets = TARGETED_ISSUE_IDS.has(safeIssueId);
+
   const handleExportIssue = async () => {
     if (!safeIssue) return;
     const isLinkIssue = safeIssue.id === 'client_error_4xx' || safeIssue.id === 'server_error_5xx';
     let rows: Record<string, unknown>[];
-    if (isLinkIssue) {
+    let headers = ['url', 'severity', 'issue'];
+    if (hasTargets) {
+      // One row per (page, offending target), so the export is a fix list.
+      headers = ['url', 'severity', 'issue', 'target_url', 'target_status'];
+      rows = safeIssue.affectedUrls.flatMap(url => {
+        const list = targets.get(url) ?? [];
+        if (list.length === 0) return [{ url, severity: safeIssue.severity, issue: safeIssue.title, target_url: '', target_status: '' }];
+        return list.map(tg => ({ url, severity: safeIssue.severity, issue: safeIssue.title, target_url: tg.url, target_status: tg.status === 0 ? 'unreachable' : (tg.status ?? '') }));
+      });
+    } else if (isLinkIssue) {
       // Broken URL export: include source pages that link to each broken URL
       rows = safeIssue.affectedUrls.flatMap(url => {
         const sources = inlinkMap.get(url) ?? [];
@@ -87,7 +109,7 @@ export default function IssuesTab({ pages, links = [] }: Props): React.ReactElem
     } else {
       rows = safeIssue.affectedUrls.map(url => ({ url, severity: safeIssue.severity, issue: safeIssue.title }));
     }
-    const headers = isLinkIssue ? ['url', 'severity', 'issue', 'source_page'] : ['url', 'severity', 'issue'];
+    if (isLinkIssue) headers = ['url', 'severity', 'issue', 'source_page'];
     const lines = [headers.join(','), ...rows.map(r => headers.map(h => escapeCsvCell(r[h])).join(','))];
     const csv = lines.join('\n');
     const filename = `issues-${safeIssue.id}-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -262,6 +284,9 @@ export default function IssuesTab({ pages, links = [] }: Props): React.ReactElem
                 {(safeIssue.id === 'client_error_4xx' || safeIssue.id === 'server_error_5xx') && links.length > 0 && (
                   <span style={{ marginLeft: 8, color: 'var(--accent-blue)' }}>· CSV includes source pages</span>
                 )}
+                {hasTargets && (
+                  <span style={{ marginLeft: 8, color: 'var(--accent-blue)' }}>· CSV includes the broken targets</span>
+                )}
               </p>
             </div>
             <ul
@@ -281,6 +306,19 @@ export default function IssuesTab({ pages, links = [] }: Props): React.ReactElem
                   }}
                 >
                   {u}
+                  {hasTargets && (targets.get(u) ?? []).slice(0, MAX_TARGETS_SHOWN).map((tg) => (
+                    <div key={tg.url} data-testid="issue-target" style={{ paddingLeft: 14, marginTop: 3, color: 'var(--text-muted)' }}>
+                      → {tg.url}{' '}
+                      <span style={{ color: tg.status != null && tg.status >= 300 && tg.status < 400 ? 'var(--accent-orange)' : 'var(--accent-red)', fontWeight: 600 }}>
+                        {tg.status === 0 ? 'unreachable' : tg.status}
+                      </span>
+                    </div>
+                  ))}
+                  {hasTargets && (targets.get(u)?.length ?? 0) > MAX_TARGETS_SHOWN && (
+                    <div style={{ paddingLeft: 14, marginTop: 3, color: 'var(--text-muted)' }}>
+                      + {(targets.get(u)?.length ?? 0) - MAX_TARGETS_SHOWN} more — see the CSV export
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

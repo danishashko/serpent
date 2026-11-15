@@ -8,11 +8,32 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import keytar from 'keytar';
 import { CrawlOrchestrator } from './crawler-orchestrator';
-import { getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl } from './database';
-import type { CrawlRecord, PageData, LinkData, ImageData } from '../types/index';
-import { isHtmlPage } from '../types/index';
+import { getAllCrawls, getPagesByCrawl, getLinksByCrawl, getImagesByCrawl, getLinkHealthSummary } from './database';
+import { getPostCrawlStage } from './link-health';
+import type { CrawlRecord, PageData, LinkData, ImageData, LinkHealthSummary } from '../types/index';
+import { isHtmlPage, isMissingAlt, isGoneStatus } from '../types/index';
 
 const KEYTAR_SERVICE = 'serpent';
+
+/**
+ * Where the post-crawl link checks stand for a crawl. The broken-link,
+ * broken-image and sitemap findings only exist once they have run, so tools
+ * that report them say which state the data is in.
+ */
+function postCrawlChecksState(crawlId: string | null): { state: 'running' | 'done' | 'not_run'; stage?: string } {
+  if (!crawlId) return { state: 'not_run' };
+  const stage = getPostCrawlStage(crawlId);
+  if (stage) return { state: 'running', stage };
+  const summary = getLinkHealthSummary<LinkHealthSummary>(crawlId);
+  return { state: summary?.state === 'done' ? 'done' : 'not_run' };
+}
+
+/** "a (404), b (410), +3 more" — keeps one issue line readable. */
+function listTargets(targets: Map<string, number | null>, max = 5): string {
+  const items = [...targets.entries()].slice(0, max).map(([url, s]) => (s == null ? url : `${url} (${s === 0 ? 'unreachable' : s})`));
+  const extra = targets.size - items.length;
+  return items.join(', ') + (extra > 0 ? `, +${extra} more` : '');
+}
 const MCP_PORT = 7777;
 const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -164,7 +185,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
     {
       title: 'Crawl status',
       annotations: { readOnlyHint: true, openWorldHint: false },
-      description: 'Get the current status of the active crawl.',
+      description: 'Get the current status of the active crawl. `post_crawl_checks` reports the follow-up pass that runs after a crawl completes (external link, image and sitemap checks): wait for "done" before reading link, image or sitemap issues.',
       inputSchema: z.object({}),
     },
     async () => {
@@ -174,7 +195,12 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ status, crawl_id: crawlId || null, completed_pages: completed }, null, 2),
+          text: JSON.stringify({
+            status,
+            crawl_id: crawlId || null,
+            completed_pages: completed,
+            post_crawl_checks: postCrawlChecksState(crawlId || null),
+          }, null, 2),
         }],
       };
     }
@@ -274,7 +300,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
     {
       title: 'SEO issues',
       annotations: { readOnlyHint: true, openWorldHint: false },
-      description: 'Get SEO issues found during a crawl, grouped by severity.',
+      description: 'Get SEO issues found during a crawl, grouped by severity. Includes on-page issues plus link health: pages linking to broken or redirecting internal URLs, broken external links, broken images, and pages that disagree with the XML sitemap. Link, image and sitemap findings come from checks that run after the crawl completes; `post_crawl_checks` in the result says whether they have finished.',
       inputSchema: z.object({
         crawl_id: z.string().describe('Crawl ID to analyze'),
         limit: z.number().int().min(1).max(1000).optional().describe('Max issues to return per severity (critical/warning/info). The *_count fields always report the true totals. Defaults to 100.'),
@@ -315,8 +341,16 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         if (is2xx && isHtml && (!p.metaDescription || !p.metaDescription.trim())) {
           issues.warning.push({ url: p.url, details: 'Missing meta description' });
         }
-        if (!p.isIndexable) {
+        // isIndexable is false for three unrelated reasons. A redirect or an
+        // error is reported by its status code, and a canonicalised page gets
+        // its own info line below, so only a page that answers 200 and is
+        // still blocked from the index (noindex) is a warning here.
+        const canonicalisedAway = !!p.canonicalUrl && p.canonicalUrl !== p.url;
+        if (is2xx && !p.isIndexable && !canonicalisedAway) {
           issues.warning.push({ url: p.url, details: 'Page marked as non-indexable' });
+        }
+        if (p.statusCode !== null && p.statusCode >= 300 && p.statusCode < 400) {
+          issues.info.push({ url: p.url, details: `Redirect (HTTP ${p.statusCode})` });
         }
         if (is2xx && isHtml && (!p.h1 || !p.h1.trim())) {
           issues.warning.push({ url: p.url, details: 'Missing H1' });
@@ -341,6 +375,59 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         }
         if (isHtml && p.h2Count !== null && p.h2Count === 0 && p.wordCount !== null && p.wordCount > 500) {
           issues.info.push({ url: p.url, details: 'No H2 headings on a long page (affects readability/SEO)' });
+        }
+      }
+
+      // ── Link health (filled by the post-crawl pass, see link-health.ts).
+      // The per-page counters say WHICH pages are affected; the link and image
+      // rows are only loaded when some counter is non-zero, to name the targets.
+      const anyLinkIssue = pages.some(p => (p.brokenOutlinks ?? 0) > 0 || (p.redirectOutlinks ?? 0) > 0 || (p.brokenExternalOutlinks ?? 0) > 0);
+      const anyImageIssue = pages.some(p => (p.brokenImages ?? 0) > 0);
+      type TargetMap = Map<string, Map<string, number | null>>;
+      const brokenInternal: TargetMap = new Map();
+      const redirecting: TargetMap = new Map();
+      const brokenExternal: TargetMap = new Map();
+      const brokenImages: TargetMap = new Map();
+      const note = (m: TargetMap, source: string, target: string, status: number | null): void => {
+        let targets = m.get(source);
+        if (!targets) { targets = new Map(); m.set(source, targets); }
+        targets.set(target, status);
+      };
+      if (anyLinkIssue) {
+        for (const l of getLinksByCrawl(crawl_id) as LinkData[]) {
+          const s = l.statusCode ?? null;
+          if (s == null) continue;
+          if (l.isInternal) {
+            if (s === 0 || s >= 400) note(brokenInternal, l.sourceUrl, l.targetUrl, s);
+            else if (s >= 300) note(redirecting, l.sourceUrl, l.targetUrl, s);
+          } else if (isGoneStatus(s)) {
+            note(brokenExternal, l.sourceUrl, l.targetUrl, s);
+          }
+        }
+      }
+      if (anyImageIssue) {
+        for (const i of getImagesByCrawl(crawl_id) as ImageData[]) {
+          if (i.statusCode === 404 || i.statusCode === 410) note(brokenImages, i.pageUrl, i.imageUrl, i.statusCode);
+        }
+      }
+      for (const p of pages) {
+        const bi = brokenInternal.get(p.url);
+        if (bi) issues.warning.push({ url: p.url, details: `Links to ${bi.size} broken internal URL(s): ${listTargets(bi)}` });
+        const be = brokenExternal.get(p.url);
+        if (be) issues.warning.push({ url: p.url, details: `Links to ${be.size} broken external URL(s): ${listTargets(be)}` });
+        const img = brokenImages.get(p.url);
+        if (img) issues.warning.push({ url: p.url, details: `${img.size} broken image(s): ${listTargets(img)}` });
+        const rd = redirecting.get(p.url);
+        if (rd) issues.info.push({ url: p.url, details: `Links to ${rd.size} redirecting internal URL(s): ${listTargets(rd)}` });
+
+        // XML sitemap agreement. inSitemap is null when no sitemap was found
+        // or the audit has not run, so neither line can fire by default.
+        if (p.inSitemap != null) {
+          if (p.inSitemap && (p.statusCode !== 200 || !p.isIndexable)) {
+            issues.warning.push({ url: p.url, details: 'Listed in the XML sitemap but not indexable (redirect, error, noindex or canonicalised elsewhere)' });
+          } else if (!p.inSitemap && p.statusCode === 200 && p.isIndexable && isHtmlPage(p)) {
+            issues.info.push({ url: p.url, details: 'Indexable page missing from the XML sitemap' });
+          }
         }
       }
 
@@ -388,6 +475,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         info_count: issues.info.length,
         limit: resolvedLimit,
         truncated,
+        post_crawl_checks: postCrawlChecksState(crawl_id),
         issues: {
           critical: issues.critical.slice(0, resolvedLimit),
           warning: issues.warning.slice(0, resolvedLimit),
@@ -501,6 +589,10 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
           target: l.targetUrl,
           anchor: l.anchorText,
           rel: l.relAttr,
+          // Internal targets: the status the crawl saw. External targets: the
+          // status from the post-crawl check (null until it has run; 0 means
+          // the host could not be reached).
+          status: l.statusCode ?? null,
         })),
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
@@ -513,7 +605,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
     {
       title: 'Image audit',
       annotations: { readOnlyHint: true, openWorldHint: false },
-      description: 'Audit images found during a crawl. Returns images with missing alt text, format info, and lazy-loading status. Useful for accessibility and performance analysis.',
+      description: 'Audit images found during a crawl. Returns images with missing alt text, format info, lazy-loading status and, once the post-crawl check has run, the HTTP status of each image file. An empty alt (alt="") marks a decorative image and is counted separately, not as missing. Useful for accessibility and performance analysis.',
       inputSchema: z.object({
         crawl_id: z.string().describe('Crawl ID from list_crawls or start_crawl'),
         missing_alt_only: z.boolean().optional().describe('If true, return only images with missing alt text. Defaults to false.'),
@@ -530,13 +622,16 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
         return { content: [{ type: 'text' as const, text: `No images found for crawl ${crawl_id}.` }] };
       }
 
-      const missingAlt = allImages.filter(i => !i.altText || !i.altText.trim());
+      // alt="" marks a decorative image and is valid; only an absent (or
+      // whitespace-only) alt is a defect.
+      const missingAlt = allImages.filter(i => isMissingAlt(i.altText));
       const filtered = missing_alt_only ? missingAlt : allImages;
       const slice = filtered.slice(resolvedOffset, resolvedOffset + resolvedLimit);
 
       const result = {
         total_images: allImages.length,
         missing_alt_count: missingAlt.length,
+        decorative_alt_count: allImages.filter(i => i.altText === '').length,
         offset: resolvedOffset,
         limit: resolvedLimit,
         images: slice.map(i => ({
@@ -547,6 +642,7 @@ function buildMcpServer(orchestrator: CrawlOrchestrator): McpServer {
           hasWidth: i.hasWidth,
           hasHeight: i.hasHeight,
           isLazy: i.isLazy,
+          status: i.statusCode ?? null,
         })),
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };

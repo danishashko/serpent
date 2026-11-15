@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
-import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, IssueRecommendation, UsageLog, CrawlDiff, CrawlDiffChange, GEOScore, PerformanceScore, CrawlSchedule, PsiScore } from '../types/index';
+import { PageData, LinkData, ImageData, RedirectData, HreflangData, CustomExtractionResult, CrawlRecord, AIAnalysis, IssueRecommendation, UsageLog, CrawlDiff, CrawlDiffChange, GEOScore, PerformanceScore, CrawlSchedule, PsiScore, isGoneStatus } from '../types/index';
 
 let db: Database.Database;
 
@@ -320,6 +320,22 @@ function createTables(): void {
   try { db.exec('ALTER TABLE links ADD COLUMN uncrawlable_reason TEXT'); } catch { /* already exists */ }
   try { db.exec('ALTER TABLE pages ADD COLUMN uncrawlable_outlinks INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
 
+  // Link health (post-crawl pass, see link-health.ts) — migration for existing
+  // DBs. The counters default to 0 and in_sitemap to NULL, so a crawl stored
+  // before this shipped reads as "not checked" rather than as broken.
+  const linkHealthColumns = [
+    'ALTER TABLE pages ADD COLUMN broken_outlinks INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE pages ADD COLUMN redirect_outlinks INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE pages ADD COLUMN broken_external_outlinks INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE pages ADD COLUMN broken_images INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE pages ADD COLUMN in_sitemap INTEGER',
+    'ALTER TABLE images ADD COLUMN status_code INTEGER',
+    'ALTER TABLE crawls ADD COLUMN link_health_json TEXT',
+  ];
+  for (const ddl of linkHealthColumns) {
+    try { db.exec(ddl); } catch { /* already exists */ }
+  }
+
   // PageSpeed Insights / CWV scores
   db.exec(`
     CREATE TABLE IF NOT EXISTS psi_scores (
@@ -619,7 +635,10 @@ export function getPagesByCrawl(crawlId: string): PageData[] {
       image_count as imageCount, link_score as linkScore, simhash,
       uncrawlable_outlinks as uncrawlableOutlinks, body_text as bodyText,
       a11y_score as a11yScore, a11y_critical as a11yCritical,
-      a11y_serious as a11ySerious, a11y_violations as a11yViolations
+      a11y_serious as a11ySerious, a11y_violations as a11yViolations,
+      broken_outlinks as brokenOutlinks, redirect_outlinks as redirectOutlinks,
+      broken_external_outlinks as brokenExternalOutlinks,
+      broken_images as brokenImages, in_sitemap as inSitemap
     FROM pages WHERE crawl_id = ? ORDER BY created_at ASC
   `).all(crawlId) as PageData[];
 }
@@ -679,6 +698,158 @@ export function updateLinkStatusCodes(crawlId: string, statusMap: Map<string, nu
   updateMany();
 }
 
+// ----- Link health (post-crawl pass) -----
+
+export function updateImageStatusCodes(crawlId: string, statusMap: Map<string, number>): void {
+  const stmt = db.prepare('UPDATE images SET status_code = ? WHERE crawl_id = ? AND image_url = ?');
+  db.transaction(() => {
+    for (const [url, status] of statusMap) stmt.run(status, crawlId, url);
+  })();
+}
+
+/** Distinct external link targets of a crawl — the input of the external link check. */
+export function getDistinctExternalLinkTargets(crawlId: string): string[] {
+  const rows = db.prepare(
+    'SELECT DISTINCT target_url as url FROM links WHERE crawl_id = ? AND is_internal = 0'
+  ).all(crawlId) as { url: string }[];
+  return rows.map(r => r.url);
+}
+
+/** Distinct http(s) image URLs seen in a crawl — the input of the image status check. */
+export function getDistinctImageUrls(crawlId: string): string[] {
+  const rows = db.prepare(
+    "SELECT DISTINCT image_url as url FROM images WHERE crawl_id = ? AND (image_url LIKE 'http://%' OR image_url LIKE 'https://%')"
+  ).all(crawlId) as { url: string }[];
+  return rows.map(r => r.url);
+}
+
+export interface LinkHealthTotals {
+  pagesWithBrokenOutlinks: number;
+  pagesWithRedirectOutlinks: number;
+  pagesWithBrokenExternalOutlinks: number;
+  pagesWithBrokenImages: number;
+}
+
+/**
+ * Recompute the per-page link-health counters from what is in the database
+ * right now. Safe to call repeatedly: the post-crawl pass calls it after each
+ * stage (crawl end, external link check, image check), so the counters fill
+ * in as results arrive instead of all at once at the end.
+ *
+ * Each counter is the number of DISTINCT targets, so a broken URL linked from
+ * the header and the footer of one page counts once for that page.
+ *
+ *  - broken_outlinks: internal targets we crawled that answered 4xx/5xx or
+ *    failed outright (status 0). We fetched these ourselves with the crawl's
+ *    own settings, so any error status is a real finding.
+ *  - redirect_outlinks: internal targets that answered 3xx.
+ *  - broken_external_outlinks / broken_images: targets we only probed. Only
+ *    "gone" statuses count (see isGoneStatus) — a 403 from someone else's WAF
+ *    is not a dead link.
+ */
+export function recomputeLinkHealth(crawlId: string): LinkHealthTotals {
+  const pageStatus = new Map<string, number | null>();
+  const pageRows = db.prepare('SELECT url, status_code as s FROM pages WHERE crawl_id = ?')
+    .iterate(crawlId) as IterableIterator<{ url: string; s: number | null }>;
+  for (const r of pageRows) pageStatus.set(r.url, r.s);
+
+  const broken = new Map<string, Set<string>>();
+  const redirect = new Map<string, Set<string>>();
+  const brokenExt = new Map<string, Set<string>>();
+  const brokenImg = new Map<string, Set<string>>();
+  const add = (m: Map<string, Set<string>>, source: string, target: string): void => {
+    let set = m.get(source);
+    if (!set) { set = new Set(); m.set(source, set); }
+    set.add(target);
+  };
+
+  const linkRows = db.prepare(
+    'SELECT source_url as source, target_url as target, is_internal as internal, status_code as s FROM links WHERE crawl_id = ?'
+  ).iterate(crawlId) as IterableIterator<{ source: string; target: string; internal: number; s: number | null }>;
+  for (const l of linkRows) {
+    if (l.internal) {
+      // Never crawled (depth or URL cap) — unknown, which is not the same as broken.
+      if (!pageStatus.has(l.target)) continue;
+      const s = pageStatus.get(l.target);
+      if (s == null) continue;
+      if (s === 0 || s >= 400) add(broken, l.source, l.target);
+      else if (s >= 300) add(redirect, l.source, l.target);
+    } else if (isGoneStatus(l.s)) {
+      add(brokenExt, l.source, l.target);
+    }
+  }
+
+  const imageRows = db.prepare(
+    'SELECT page_url as page, image_url as url, status_code as s FROM images WHERE crawl_id = ? AND status_code IS NOT NULL'
+  ).iterate(crawlId) as IterableIterator<{ page: string; url: string; s: number | null }>;
+  for (const i of imageRows) {
+    // 0 on an image means the probe could not connect. Image hosts are CDNs
+    // that sometimes refuse a bare probe, so only an explicit 404/410 counts.
+    if (i.s === 404 || i.s === 410) add(brokenImg, i.page, i.url);
+  }
+
+  const update = db.prepare(
+    'UPDATE pages SET broken_outlinks = ?, redirect_outlinks = ?, broken_external_outlinks = ?, broken_images = ? WHERE crawl_id = ? AND url = ?'
+  );
+  db.transaction(() => {
+    db.prepare(
+      'UPDATE pages SET broken_outlinks = 0, redirect_outlinks = 0, broken_external_outlinks = 0, broken_images = 0 WHERE crawl_id = ?'
+    ).run(crawlId);
+    const sources = new Set<string>([...broken.keys(), ...redirect.keys(), ...brokenExt.keys(), ...brokenImg.keys()]);
+    for (const url of sources) {
+      update.run(
+        broken.get(url)?.size ?? 0,
+        redirect.get(url)?.size ?? 0,
+        brokenExt.get(url)?.size ?? 0,
+        brokenImg.get(url)?.size ?? 0,
+        crawlId,
+        url,
+      );
+    }
+  })();
+
+  return {
+    pagesWithBrokenOutlinks: broken.size,
+    pagesWithRedirectOutlinks: redirect.size,
+    pagesWithBrokenExternalOutlinks: brokenExt.size,
+    pagesWithBrokenImages: brokenImg.size,
+  };
+}
+
+/**
+ * Flag each page as listed / not listed in the XML sitemap. `scopeOrigin`
+ * limits the flag to the site the sitemap belongs to, so a cross-domain list
+ * crawl does not mark every off-site page as "missing from the sitemap".
+ * Pages outside the scope keep NULL (not audited).
+ */
+export function setPagesInSitemap(crawlId: string, sitemapUrls: Set<string>, scopeOrigin: string): void {
+  const rows = db.prepare('SELECT url FROM pages WHERE crawl_id = ?').all(crawlId) as { url: string }[];
+  const stmt = db.prepare('UPDATE pages SET in_sitemap = ? WHERE crawl_id = ? AND url = ?');
+  db.transaction(() => {
+    for (const { url } of rows) {
+      let flag: number | null = null;
+      try {
+        const u = new URL(url);
+        if (u.origin === scopeOrigin) {
+          u.hash = '';
+          flag = sitemapUrls.has(u.toString()) ? 1 : 0;
+        }
+      } catch { /* unparseable URL — leave unaudited */ }
+      stmt.run(flag, crawlId, url);
+    }
+  })();
+}
+
+export function setLinkHealthSummary(crawlId: string, summary: unknown): void {
+  db.prepare('UPDATE crawls SET link_health_json = ? WHERE id = ?').run(JSON.stringify(summary), crawlId);
+}
+
+export function getLinkHealthSummary<T = unknown>(crawlId: string): T | null {
+  const row = db.prepare('SELECT link_health_json as j FROM crawls WHERE id = ?').get(crawlId) as { j: string | null } | undefined;
+  if (!row?.j) return null;
+  try { return JSON.parse(row.j) as T; } catch { return null; }
+}
+
 // ----- Image operations -----
 
 export function insertImages(images: ImageData[]): void {
@@ -703,7 +874,7 @@ export function getImagesByCrawl(crawlId: string): ImageData[] {
   return db.prepare(`
     SELECT id, crawl_id as crawlId, page_url as pageUrl, image_url as imageUrl,
       alt_text as altText, format, has_width as hasWidth, has_height as hasHeight,
-      is_lazy as isLazy
+      is_lazy as isLazy, status_code as statusCode
     FROM images WHERE crawl_id = ?
   `).all(crawlId) as ImageData[];
 }
@@ -1090,7 +1261,7 @@ export function getImagesForUrls(crawlId: string, pageUrls: string[]): ImageData
   return db.prepare(`
     SELECT id, crawl_id as crawlId, page_url as pageUrl, image_url as imageUrl,
       alt_text as altText, format, has_width as hasWidth, has_height as hasHeight,
-      is_lazy as isLazy
+      is_lazy as isLazy, status_code as statusCode
     FROM images WHERE crawl_id = ? AND page_url IN (${placeholders})
   `).all(crawlId, ...pageUrls) as ImageData[];
 }
@@ -1171,8 +1342,8 @@ export function getImagesMissingAlt(crawlId: string): ImageData[] {
   return db.prepare(`
     SELECT id, crawl_id as crawlId, page_url as pageUrl, image_url as imageUrl,
       alt_text as altText, format, has_width as hasWidth, has_height as hasHeight,
-      is_lazy as isLazy
-    FROM images WHERE crawl_id = ? AND (alt_text IS NULL OR alt_text = '')
+      is_lazy as isLazy, status_code as statusCode
+    FROM images WHERE crawl_id = ? AND (alt_text IS NULL OR (alt_text != '' AND TRIM(alt_text) = ''))
   `).all(crawlId) as ImageData[];
 }
 
