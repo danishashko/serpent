@@ -5,16 +5,26 @@
  * the module loads cleanly. All tests use normal HTTP (axios) mode,
  * exercising the cheerio extraction logic via an in-process HTML fixture.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import axios from 'axios';
-
-// Must import AFTER mocks are set up
-import { crawlPageLocal } from '../main/crawler-local';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import type { MockedFunction } from 'vitest';
+import type axiosType from 'axios';
 import { CrawlConfig } from '../types/index';
 
 // ── Mock axios so we never hit the network ──
 vi.mock('axios');
-const axiosMock = vi.mocked(axios.get);
+
+let crawlPageLocal: typeof import('../main/crawler-local').crawlPageLocal;
+let axiosMock: MockedFunction<typeof axiosType.get>;
+
+// The suite shares one module cache. If an earlier file already loaded
+// crawler-local, that copy is bound to a different axios and these requests
+// would reach the network. Load a fresh copy bound to this file's mock.
+beforeAll(async () => {
+  vi.resetModules();
+  const axios = (await import('axios')).default;
+  axiosMock = vi.mocked(axios.get);
+  ({ crawlPageLocal } = await import('../main/crawler-local'));
+});
 
 const BASE_CONFIG: CrawlConfig = {
   startUrl: 'https://example.com',
