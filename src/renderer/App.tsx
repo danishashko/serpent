@@ -59,7 +59,7 @@ declare global {
       getSettings: () => Promise<unknown>;
       saveSettings: (settings: unknown) => Promise<{ success: boolean; error?: string }>;
       testBrightData: (apiKey: string, zone: string) => Promise<{ success: boolean }>;
-      testBrightDataBrowser: (auth: string) => Promise<{ success: boolean }>;
+      testBrightDataBrowser: (auth: string) => Promise<{ success: boolean; error?: string }>;
       testOllama: (url: string) => Promise<{ success: boolean; models: unknown[] }>;
       testAIProvider: (provider: string, config: { ollamaUrl?: string; apiKey?: string }) => Promise<{ success: boolean; models?: string[] }>;
       aiAnalyze: (crawlId: string) => Promise<{ success: boolean; total?: number; error?: string }>;

@@ -9,7 +9,7 @@ import { analyzePerformanceBatch } from './performance-analyzer';
 import { generatePdfReport } from './report-generator';
 import { CrawlOrchestrator } from './crawler-orchestrator';
 import { DEFAULT_USER_AGENT } from './crawler-local';
-import { testBrightDataConnection, testBrightDataBrowserConnection } from './crawler-brightdata';
+import { testBrightDataConnection, testBrightDataBrowserConnection, resolveBrowserAuth } from './crawler-brightdata';
 import { testOllamaConnection, listOllamaModels, analyzeContentQuality, analyzeTechnicalSEO, analyzeIssueGroup, testAIProviderConnection, AIProviderConfig } from './ai-analyzer';
 import { querySerpBatch, storeSerpResults, getSerpResults } from './serp-client';
 import { discoverCompetitors, discoverContentGaps, getDiscoverResults, getContentGaps } from './discover-client';
@@ -390,10 +390,13 @@ ipcMain.handle(IPC.CRAWL_START, async (_event, config: CrawlConfig) => {
       if (!isSafeExternalUrl(config.startUrl)) {
         return { success: false, error: 'Invalid start URL. Must be a public http/https address.' };
       }
-      bdBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
-      if (!bdBrowserAuth) {
+      const storedBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
+      if (!storedBrowserAuth) {
         return { success: false, error: 'Bright Data Browser API credentials not configured. Go to Settings.' };
       }
+      const resolved = await resolveBrowserAuth(storedBrowserAuth, await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key'));
+      if ('error' in resolved) return { success: false, error: resolved.error };
+      bdBrowserAuth = resolved.auth;
     }
 
     const crawlId = await orchestrator.startCrawl(config, apiKey || undefined, bdZone || undefined, bdBrowserAuth || undefined, bdCustomerId || undefined);
@@ -794,7 +797,12 @@ ipcMain.handle(IPC.CRAWL_RESUME_INCOMPLETE, async () => {
       bdZone = await keytar.getPassword(KEYTAR_SERVICE, 'bd_zone');
       bdCustomerId = await keytar.getPassword(KEYTAR_SERVICE, 'bd_customer_id');
     } else if (config.engine === 'brightdata-browser') {
-      bdBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
+      const storedBrowserAuth = await keytar.getPassword(KEYTAR_SERVICE, 'bd_browser_auth');
+      if (storedBrowserAuth) {
+        const resolved = await resolveBrowserAuth(storedBrowserAuth, await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key'));
+        if ('error' in resolved) return { success: false, error: resolved.error };
+        bdBrowserAuth = resolved.auth;
+      }
     }
 
     const crawlId = await orchestrator.resumeIncompleteCrawl(apiKey || undefined, bdZone || undefined, bdBrowserAuth || undefined, bdCustomerId || undefined);
@@ -1022,7 +1030,9 @@ ipcMain.handle(IPC.SETTINGS_TEST_BD, async (_event, apiKey: string, zone: string
 });
 
 ipcMain.handle(IPC.SETTINGS_TEST_BD_BROWSER, async (_event, auth: string) => {
-  const ok = await testBrightDataBrowserConnection(auth);
+  const resolved = await resolveBrowserAuth(auth ?? '', await keytar.getPassword(KEYTAR_SERVICE, 'bd_api_key'));
+  if ('error' in resolved) return { success: false, error: resolved.error };
+  const ok = await testBrightDataBrowserConnection(resolved.auth);
   return { success: ok };
 });
 

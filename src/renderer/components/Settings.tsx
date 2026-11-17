@@ -135,8 +135,8 @@ export default function Settings({ showToast, onOpenCrawl }: Props): React.React
   };
 
   const handleTestBdBrowser = async () => {
-    if (!settings.brightDataBrowserAuth || !settings.brightDataBrowserAuth.includes(':')) {
-      showToast('Enter Browser API credentials as USER:PASS', 'error');
+    if (!settings.brightDataBrowserAuth || !settings.brightDataBrowserAuth.trim()) {
+      showToast('Enter a Browser API zone name, or the login as USER:PASS', 'error');
       return;
     }
     setTestingBdBrowser(true);
@@ -144,7 +144,7 @@ export default function Settings({ showToast, onOpenCrawl }: Props): React.React
     try {
       const result = await window.api.testBrightDataBrowser(settings.brightDataBrowserAuth);
       setBdBrowserStatus(result.success ? 'ok' : 'fail');
-      showToast(result.success ? 'Browser API connection OK!' : 'Browser API connection failed', result.success ? 'success' : 'error');
+      showToast(result.success ? 'Browser API connection OK!' : (result.error || 'Browser API connection failed'), result.success ? 'success' : 'error');
     } finally {
       setTestingBdBrowser(false);
     }
@@ -354,12 +354,12 @@ export default function Settings({ showToast, onOpenCrawl }: Props): React.React
         </h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
-            <label className="label">Credentials (USER:PASS)</label>
+            <label className="label">Zone name, or login (USER:PASS)</label>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
                 className="input"
                 type={showBdBrowserAuth ? 'text' : 'password'}
-                placeholder="brd-customer-...-zone-...:password"
+                placeholder="scraping_browser1"
                 value={settings.brightDataBrowserAuth ?? ''}
                 onChange={e => set('brightDataBrowserAuth', e.target.value)}
                 style={{ flex: 1, fontFamily: 'monospace' }}
@@ -369,7 +369,7 @@ export default function Settings({ showToast, onOpenCrawl }: Props): React.React
               </button>
             </div>
             <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-              From your Browser API zone's Overview tab. Renders JS/SPA sites · ~$8/GB
+              The name of your Browser API zone is enough when the API key above is saved. Renders JS/SPA sites · ~$8/GB
             </p>
           </div>
           <button

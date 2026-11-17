@@ -30,6 +30,42 @@ const IMAGE_SRC_ATTRS = ['data-lazy-src', 'data-src', 'data-original', 'src'];
 
 const BD_ENDPOINT = 'https://api.brightdata.com/request';
 
+/**
+ * Web Unlocker solves the target's bot check before it answers, and on a
+ * protected site that alone can take 40 seconds or more. A shorter limit turns
+ * pages Bright Data would have delivered into failed rows.
+ */
+export const BD_UNLOCKER_MIN_TIMEOUT_MS = 90_000;
+const BD_UNLOCKER_ATTEMPTS = 2;
+
+/** One Web Unlocker request, retried once when the request itself fails (timeout, dropped connection). */
+export async function postUnlockerRequest(apiKey: string, zone: string, url: string, timeoutMs: number) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await axios.post(
+        BD_ENDPOINT,
+        {
+          zone,
+          url,
+          format: 'json',
+          country: 'us',
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          timeout: timeoutMs,
+          responseType: 'json',
+          validateStatus: () => true,
+        }
+      );
+    } catch (err: unknown) {
+      if (attempt >= BD_UNLOCKER_ATTEMPTS) throw err;
+    }
+  }
+}
+
 // Cache zone password to avoid hitting BD API on every request
 const zonePasswordCache = new Map<string, { password: string; expiresAt: number }>();
 const ZONE_PASSWORD_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -143,23 +179,11 @@ export async function crawlPageBrightData(
   } else {
     // ── REST API mode (detects redirects via x-unblocker-redirected-to header) ─
     try {
-      const response = await axios.post(
-        BD_ENDPOINT,
-        {
-          zone,
-          url,
-          format: 'json',
-          country: 'us',
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          timeout: 30000,
-          responseType: 'json',
-          validateStatus: () => true,
-        }
+      const response = await postUnlockerRequest(
+        apiKey,
+        zone,
+        url,
+        Math.max(config.timeout || 0, BD_UNLOCKER_MIN_TIMEOUT_MS)
       );
 
       responseTimeMs = Date.now() - startTime;
@@ -589,6 +613,54 @@ export async function testBrightDataConnection(apiKey: string, zone: string): Pr
 }
 
 const BD_BROWSER_HOST = 'brd.superproxy.io:9222';
+
+export type BrowserAuthResult = { auth: string } | { error: string };
+
+let bdCustomerCache: { apiKey: string; customer: string } | null = null;
+
+async function getCustomerId(apiKey: string): Promise<string | null> {
+  if (bdCustomerCache && bdCustomerCache.apiKey === apiKey) return bdCustomerCache.customer;
+  try {
+    const res = await axios.get('https://api.brightdata.com/status', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeout: 10000,
+      validateStatus: () => true,
+    });
+    const customer = res.status === 200 ? res.data?.customer : null;
+    if (typeof customer === 'string' && customer) {
+      bdCustomerCache = { apiKey, customer };
+      return customer;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * The Browser API setting holds either the full login ("USER:PASS") or just a
+ * zone name. A zone name is turned into the login with the Bright Data API key,
+ * so nobody has to copy a customer ID and a zone password by hand.
+ */
+export async function resolveBrowserAuth(stored: string, apiKey: string | null): Promise<BrowserAuthResult> {
+  const value = stored.trim();
+  if (value.includes(':')) return { auth: value };
+  if (!/^[A-Za-z0-9_]+$/.test(value)) {
+    return { error: 'Enter a Browser API zone name, or the full login as USER:PASS.' };
+  }
+  if (!apiKey) {
+    return { error: 'A Browser API zone name needs your Bright Data API key. Add the key in Settings, or enter the full login as USER:PASS.' };
+  }
+  const customer = await getCustomerId(apiKey);
+  if (!customer) {
+    return { error: 'Bright Data did not accept the API key, so the Browser API login could not be built.' };
+  }
+  const password = await getZonePassword(apiKey, value);
+  if (!password) {
+    return { error: `Bright Data has no zone named "${value}" on this account.` };
+  }
+  return { auth: `brd-customer-${customer}-zone-${value}:${password}` };
+}
 
 /**
  * Bright Data Browser API (Scraping Browser) cost estimate.
