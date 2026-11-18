@@ -1,8 +1,8 @@
 import { getDb } from './database';
 import { v4 as uuidv4 } from 'uuid';
 
-// Bright Data Web Unlocker CPM pricing: $1 per 1,000 requests
-const COST_PER_REQUEST_USD = 0.001;
+// Bright Data Web Unlocker pay-as-you-go pricing: $1.50 per 1,000 requests
+const COST_PER_REQUEST_USD = 0.0015;
 
 // Hard stop threshold — pause crawl at this percentage of limit
 const HARD_STOP_RATIO = 0.95;

@@ -467,7 +467,7 @@ export default function CrawlConfig({
               marginTop: 4,
             }}
           >
-            ~$1.00/1,000 pages · Set API key in Settings
+            ~$1.50/1,000 pages · Set API key in Settings
           </p>
         )}
         {config.engine === "brightdata-browser" && (

@@ -587,9 +587,9 @@ function buildResultFromHtml(
   return { page, links, images, discoveredUrls, redirectChain: [], hreflang: hreflangEntries, contentHash, customExtractions: customExtractionResults, bytesDownloaded: pageSizeBytes };
 }
 
-/** Bright Data Web Unlocker CPM pricing: $1 per 1,000 requests */
+/** Bright Data Web Unlocker pay-as-you-go pricing: $1.50 per 1,000 requests */
 export function calculateBrightDataCost(): number {
-  return 0.001; // $0.001 per request (CPM model)
+  return 0.0015; // $0.0015 per request (CPM model)
 }
 
 export async function testBrightDataConnection(apiKey: string, zone: string): Promise<boolean> {

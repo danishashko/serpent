@@ -41,21 +41,21 @@ describe('CostTracker', () => {
   });
 
   describe('costPerRequest', () => {
-    it('returns $0.001 (CPM model)', () => {
-      expect(CostTracker.costPerRequest()).toBe(0.001);
+    it('returns $0.0015 (CPM model)', () => {
+      expect(CostTracker.costPerRequest()).toBe(0.0015);
     });
   });
 
   describe('recordRequest', () => {
-    it('increments crawl spend by $0.001 per request', () => {
+    it('increments crawl spend by $0.0015 per request', () => {
       const tracker = new CostTracker('crawl-1', 10, 50);
       expect(tracker.getCrawlSpend()).toBe(0);
 
       tracker.recordRequest(5000);
-      expect(tracker.getCrawlSpend()).toBeCloseTo(0.001, 6);
+      expect(tracker.getCrawlSpend()).toBeCloseTo(0.0015, 6);
 
       tracker.recordRequest(10000);
-      expect(tracker.getCrawlSpend()).toBeCloseTo(0.002, 6);
+      expect(tracker.getCrawlSpend()).toBeCloseTo(0.003, 6);
     });
 
     it('inserts a row into usage_logs', () => {
@@ -66,13 +66,13 @@ describe('CostTracker', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].engine_type).toBe('brightdata');
       expect(rows[0].bytes_downloaded).toBe(12000);
-      expect(rows[0].cost_usd).toBe(0.001);
+      expect(rows[0].cost_usd).toBe(0.0015);
     });
 
     it('returns the cost of the request', () => {
       const tracker = new CostTracker('crawl-1', 10, 50);
       const cost = tracker.recordRequest(5000);
-      expect(cost).toBe(0.001);
+      expect(cost).toBe(0.0015);
     });
   });
 
@@ -114,7 +114,7 @@ describe('CostTracker', () => {
       tracker.recordRequest(5000);
       tracker.recordRequest(5000);
       tracker.recordRequest(5000);
-      expect(tracker.getDailySpend()).toBeCloseTo(0.003, 6);
+      expect(tracker.getDailySpend()).toBeCloseTo(0.0045, 6);
     });
   });
 

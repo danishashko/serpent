@@ -69,15 +69,15 @@ function createTestDb(): Database.Database {
 }
 
 describe('calculateBrightDataCost (CPM model)', () => {
-  it('returns $0.001 per request regardless of bytes', () => {
-    expect(calculateBrightDataCost()).toBe(0.001);
+  it('returns $0.0015 per request regardless of bytes', () => {
+    expect(calculateBrightDataCost()).toBe(0.0015);
   });
 
   it('is consistent across multiple calls', () => {
     const a = calculateBrightDataCost();
     const b = calculateBrightDataCost();
     expect(a).toBe(b);
-    expect(a).toBe(0.001);
+    expect(a).toBe(0.0015);
   });
 });
 
